@@ -12,10 +12,13 @@ from .provider import LLMProvider, get_llm_provider
 from .prompts import (
     LOG_ANALYSIS_PROMPT,
     LOG_CATEGORIZATION_PROMPT,
+    LOG_CATEGORIZATION_WITH_RAG_PROMPT,
     ANALYSIS_REPORT_PROMPT,
     TEST_CASE_GENERATION_PROMPT,
+    TEST_CASE_GENERATION_WITH_RAG_PROMPT,
     RESULT_VALIDATION_PROMPT,
-    LOG_DIAGNOSIS_PROMPT
+    LOG_DIAGNOSIS_PROMPT,
+    API_DOC_COMPARISON_PROMPT
 )
 from ..utils.logger import get_logger
 
@@ -105,11 +108,49 @@ class LogAnalysisChain(BaseChain):
             
         return result
     
-    def categorize_requests(self, requests: list[dict[str, Any]]) -> dict[str, Any]:
-        """对请求进行智能分类"""
+    def categorize_requests(
+        self,
+        requests: list[dict[str, Any]],
+        api_doc_context: str = ""
+    ) -> dict[str, Any]:
+        """
+        对请求进行智能分类
+        
+        Args:
+            requests: 请求列表
+            api_doc_context: 接口文档上下文（RAG）
+        """
         requests_json = json.dumps(requests[:50], ensure_ascii=False, indent=2)
-        prompt = LOG_CATEGORIZATION_PROMPT.format(requests_json=requests_json)
+        
+        if api_doc_context:
+            # 使用带RAG的提示词
+            prompt = LOG_CATEGORIZATION_WITH_RAG_PROMPT.format(
+                api_doc_context=api_doc_context,
+                requests_json=requests_json
+            )
+        else:
+            prompt = LOG_CATEGORIZATION_PROMPT.format(requests_json=requests_json)
+        
         response = self._call_llm(prompt, "请求分类")
+        return self._parse_json_response(response)
+    
+    def compare_with_api_doc(
+        self,
+        api_doc_summary: str,
+        coverage_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        对比分析接口文档与实际日志
+        
+        Args:
+            api_doc_summary: 接口文档摘要
+            coverage_data: 覆盖分析数据
+        """
+        prompt = API_DOC_COMPARISON_PROMPT.format(
+            api_doc_summary=api_doc_summary,
+            coverage_data=json.dumps(coverage_data, ensure_ascii=False, indent=2)
+        )
+        response = self._call_llm(prompt, "文档对比分析")
         return self._parse_json_response(response)
     
     def diagnose_errors(self, error_logs: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -149,14 +190,32 @@ class TestCaseGeneratorChain(BaseChain):
         self,
         api_info: dict[str, Any],
         sample_requests: list[dict[str, Any]],
-        test_strategy: str = "comprehensive"
+        test_strategy: str = "comprehensive",
+        api_doc_context: str = ""
     ) -> dict[str, Any]:
-        """生成测试用例"""
-        prompt = TEST_CASE_GENERATION_PROMPT.format(
-            api_info=json.dumps(api_info, ensure_ascii=False, indent=2),
-            sample_requests=json.dumps(sample_requests[:10], ensure_ascii=False, indent=2),
-            test_strategy=test_strategy
-        )
+        """
+        生成测试用例
+        
+        Args:
+            api_info: API信息
+            sample_requests: 示例请求
+            test_strategy: 测试策略
+            api_doc_context: 接口文档上下文（RAG）
+        """
+        if api_doc_context:
+            prompt = TEST_CASE_GENERATION_WITH_RAG_PROMPT.format(
+                api_doc_context=api_doc_context,
+                api_info=json.dumps(api_info, ensure_ascii=False, indent=2),
+                sample_requests=json.dumps(sample_requests[:10], ensure_ascii=False, indent=2),
+                test_strategy=test_strategy
+            )
+        else:
+            prompt = TEST_CASE_GENERATION_PROMPT.format(
+                api_info=json.dumps(api_info, ensure_ascii=False, indent=2),
+                sample_requests=json.dumps(sample_requests[:10], ensure_ascii=False, indent=2),
+                test_strategy=test_strategy
+            )
+        
         response = self._call_llm(prompt, "测试用例生成")
         result = self._parse_json_response(response)
         

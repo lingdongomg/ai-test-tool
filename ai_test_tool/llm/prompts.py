@@ -296,3 +296,176 @@ LOG_DIAGNOSIS_PROMPT = """你是一位系统诊断专家，请分析以下异常
 ```
 
 请开始诊断："""
+
+
+# 带RAG上下文的日志分类Prompt
+LOG_CATEGORIZATION_WITH_RAG_PROMPT = """你是一位API架构师，请对以下API请求进行智能分类。
+
+{api_doc_context}
+
+## 请求列表
+```json
+{requests_json}
+```
+
+## 分类要求
+1. **优先使用接口文档中的标签**：如果请求URL在接口文档中有匹配，请使用文档中定义的标签作为分类
+2. **第三方接口识别**：如果请求URL在接口文档中没有匹配，可能是第三方接口，请标记为"第三方接口"或根据URL特征推断合理分类
+3. **保持分类一致性**：相同模块的接口应使用相同的分类名称
+
+## 输出格式
+```json
+{{
+  "categorized_requests": [
+    {{
+      "url": "请求URL",
+      "category": "分类名称（优先使用文档标签）",
+      "sub_category": "子分类（可选）",
+      "source": "doc/inferred/third_party",
+      "confidence": 0.0-1.0
+    }}
+  ],
+  "category_summary": {{
+    "分类名称": 数量
+  }},
+  "third_party_apis": [
+    {{
+      "url": "第三方接口URL",
+      "inferred_service": "推断的服务名称"
+    }}
+  ]
+}}
+```
+
+请开始分类："""
+
+
+# 接口文档对比分析Prompt
+API_DOC_COMPARISON_PROMPT = """你是一位API架构师和质量分析专家，请对比分析接口文档与实际日志的差异。
+
+## 接口文档概览
+{api_doc_summary}
+
+## 覆盖分析数据
+```json
+{coverage_data}
+```
+
+## 分析任务
+1. **文档完整性分析**：
+   - 日志中出现但文档未收录的接口（可能是文档遗漏或新增接口）
+   - 文档中有但日志中从未调用的接口（可能是废弃接口或测试覆盖不足）
+
+2. **接口一致性分析**：
+   - 检查请求参数是否与文档定义一致
+   - 检查响应格式是否符合文档描述
+
+3. **潜在问题识别**：
+   - 可能的文档过期问题
+   - 可能的代码实现与文档不符
+   - 第三方接口依赖情况
+
+## 输出格式
+```json
+{{
+  "doc_completeness": {{
+    "missing_in_doc": [
+      {{
+        "url": "未收录的接口URL",
+        "method": "HTTP方法",
+        "call_count": 调用次数,
+        "recommendation": "建议（如：建议添加到文档）"
+      }}
+    ],
+    "unused_in_doc": [
+      {{
+        "path": "文档中的接口路径",
+        "method": "HTTP方法",
+        "name": "接口名称",
+        "recommendation": "建议（如：确认是否废弃）"
+      }}
+    ]
+  }},
+  "consistency_issues": [
+    {{
+      "endpoint": "接口路径",
+      "issue_type": "parameter_mismatch/response_mismatch/other",
+      "description": "问题描述",
+      "severity": "high/medium/low"
+    }}
+  ],
+  "third_party_dependencies": [
+    {{
+      "url_pattern": "第三方接口URL模式",
+      "inferred_service": "推断的服务名",
+      "call_count": 调用次数,
+      "recommendation": "建议"
+    }}
+  ],
+  "summary": {{
+    "doc_coverage_rate": "文档覆盖率",
+    "api_usage_rate": "接口使用率",
+    "total_issues": 问题总数,
+    "critical_issues": 严重问题数
+  }},
+  "recommendations": [
+    "改进建议1",
+    "改进建议2"
+  ]
+}}
+```
+
+请开始分析："""
+
+
+# 带RAG上下文的测试用例生成Prompt
+TEST_CASE_GENERATION_WITH_RAG_PROMPT = """你是一位资深的测试工程师，请根据以下API信息和接口文档生成测试用例。
+
+{api_doc_context}
+
+## 待测试API信息
+```json
+{api_info}
+```
+
+## 示例请求（来自日志）
+```json
+{sample_requests}
+```
+
+## 测试策略: {test_strategy}
+- comprehensive: 全面测试（正常、边界、异常、安全）
+- quick: 快速测试（仅正常和基本异常）
+- security: 安全测试（注入、越权、敏感信息）
+
+## 生成要求
+1. **参考接口文档**：使用文档中定义的参数类型、取值范围、必填项等信息
+2. **参考实际请求**：结合日志中的真实请求数据
+3. **覆盖边界情况**：根据文档中的参数约束设计边界测试
+4. **验证响应格式**：根据文档中的响应定义设计验证规则
+
+## 输出格式
+```json
+{{
+  "test_cases": [
+    {{
+      "id": "TC001",
+      "name": "测试用例名称",
+      "description": "测试描述",
+      "category": "normal/boundary/exception/security",
+      "priority": "high/medium/low",
+      "method": "HTTP方法",
+      "url": "请求URL",
+      "headers": {{}},
+      "body": {{}},
+      "expected_status": 200,
+      "expected_response_contains": ["期望响应包含的字段"],
+      "validation_rules": ["验证规则"],
+      "doc_reference": "引用的文档接口（如有）"
+    }}
+  ],
+  "coverage_notes": "测试覆盖说明"
+}}
+```
+
+请生成测试用例："""

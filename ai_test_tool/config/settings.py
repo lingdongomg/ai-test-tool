@@ -128,12 +128,8 @@ class AppConfig(BaseModel):
         return cls(
             llm=LLMConfig.from_env(),
             parser=LogParserConfig(),
-            test=TestConfig(
-                base_url=os.getenv("TEST_BASE_URL", "http://localhost:8080")
-            ),
-            output=OutputConfig(
-                output_dir=os.getenv("OUTPUT_DIR", "./output")
-            )
+            test=TestConfig(),
+            output=OutputConfig()
         )
 
 

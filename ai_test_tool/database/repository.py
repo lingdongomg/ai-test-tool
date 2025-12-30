@@ -12,7 +12,8 @@ from .models import (
     ParsedRequestRecord,
     TestCaseRecord,
     TestResultRecord,
-    AnalysisReport, ReportType
+    AnalysisReport, ReportType,
+    TestCaseVersion, TestCaseChangeLog, ChangeType
 )
 
 
@@ -454,3 +455,198 @@ class ReportRepository(BaseRepository):
         """
         row = self.db.fetch_one(sql, (task_id, report_type.value))
         return AnalysisReport.from_dict(row) if row else None
+
+
+class TestCaseVersionRepository(BaseRepository):
+    """测试用例版本仓库"""
+    
+    def create(self, version: TestCaseVersion) -> int:
+        """创建版本记录"""
+        data = version.to_dict()
+        sql = """
+            INSERT INTO test_case_versions 
+            (version_id, task_id, case_id, version_number, name, description,
+             category, priority, method, url, headers, body, query_params,
+             expected_status_code, expected_response, max_response_time_ms,
+             tags, group_name, dependencies, change_type, change_summary,
+             changed_fields, changed_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            data['version_id'], data['task_id'], data['case_id'], data['version_number'],
+            data['name'], data['description'], data['category'], data['priority'],
+            data['method'], data['url'], data['headers'], data['body'], data['query_params'],
+            data['expected_status_code'], data['expected_response'], data['max_response_time_ms'],
+            data['tags'], data['group_name'], data['dependencies'], data['change_type'],
+            data['change_summary'], data['changed_fields'], data['changed_by']
+        )
+        return self.db.execute(sql, params)
+    
+    def get_by_case(
+        self,
+        task_id: str,
+        case_id: str,
+        limit: int = 50
+    ) -> list[TestCaseVersion]:
+        """获取用例的所有版本"""
+        sql = """
+            SELECT * FROM test_case_versions 
+            WHERE task_id = %s AND case_id = %s 
+            ORDER BY version_number DESC 
+            LIMIT %s
+        """
+        rows = self.db.fetch_all(sql, (task_id, case_id, limit))
+        return [TestCaseVersion.from_dict(row) for row in rows]
+    
+    def get_version(
+        self,
+        task_id: str,
+        case_id: str,
+        version_number: int
+    ) -> TestCaseVersion | None:
+        """获取指定版本"""
+        sql = """
+            SELECT * FROM test_case_versions 
+            WHERE task_id = %s AND case_id = %s AND version_number = %s
+        """
+        row = self.db.fetch_one(sql, (task_id, case_id, version_number))
+        return TestCaseVersion.from_dict(row) if row else None
+    
+    def get_by_version_id(self, version_id: str) -> TestCaseVersion | None:
+        """根据版本ID获取版本"""
+        sql = "SELECT * FROM test_case_versions WHERE version_id = %s"
+        row = self.db.fetch_one(sql, (version_id,))
+        return TestCaseVersion.from_dict(row) if row else None
+    
+    def get_latest_version_number(self, task_id: str, case_id: str) -> int:
+        """获取最新版本号"""
+        sql = """
+            SELECT MAX(version_number) as max_version 
+            FROM test_case_versions 
+            WHERE task_id = %s AND case_id = %s
+        """
+        row = self.db.fetch_one(sql, (task_id, case_id))
+        return row['max_version'] if row and row['max_version'] else 0
+    
+    def get_versions_count(self, task_id: str, case_id: str) -> int:
+        """获取版本数量"""
+        sql = """
+            SELECT COUNT(*) as count FROM test_case_versions 
+            WHERE task_id = %s AND case_id = %s
+        """
+        row = self.db.fetch_one(sql, (task_id, case_id))
+        return row['count'] if row else 0
+    
+    def compare_versions(
+        self,
+        task_id: str,
+        case_id: str,
+        version1: int,
+        version2: int
+    ) -> dict[str, Any]:
+        """比较两个版本的差异"""
+        v1 = self.get_version(task_id, case_id, version1)
+        v2 = self.get_version(task_id, case_id, version2)
+        
+        if not v1 or not v2:
+            return {"error": "版本不存在"}
+        
+        # 比较字段
+        fields_to_compare = [
+            'name', 'description', 'category', 'priority', 'method', 'url',
+            'headers', 'body', 'query_params', 'expected_status_code',
+            'expected_response', 'max_response_time_ms', 'tags', 'group_name', 'dependencies'
+        ]
+        
+        differences: list[dict[str, Any]] = []
+        for field in fields_to_compare:
+            val1 = getattr(v1, field)
+            val2 = getattr(v2, field)
+            
+            # 枚举类型转换为值
+            if hasattr(val1, 'value'):
+                val1 = val1.value
+            if hasattr(val2, 'value'):
+                val2 = val2.value
+            
+            if val1 != val2:
+                differences.append({
+                    "field": field,
+                    "version1_value": val1,
+                    "version2_value": val2
+                })
+        
+        return {
+            "version1": version1,
+            "version2": version2,
+            "differences": differences,
+            "has_changes": len(differences) > 0
+        }
+
+
+class TestCaseChangeLogRepository(BaseRepository):
+    """测试用例变更日志仓库"""
+    
+    def create(self, log: TestCaseChangeLog) -> int:
+        """创建变更日志"""
+        data = log.to_dict()
+        sql = """
+            INSERT INTO test_case_change_logs 
+            (task_id, case_id, version_id, change_type, change_summary,
+             old_value, new_value, changed_by, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            data['task_id'], data['case_id'], data['version_id'], data['change_type'],
+            data['change_summary'], data['old_value'], data['new_value'],
+            data['changed_by'], data['ip_address'], data['user_agent']
+        )
+        return self.db.execute(sql, params)
+    
+    def get_by_case(
+        self,
+        task_id: str,
+        case_id: str,
+        limit: int = 100
+    ) -> list[TestCaseChangeLog]:
+        """获取用例的变更日志"""
+        sql = """
+            SELECT * FROM test_case_change_logs 
+            WHERE task_id = %s AND case_id = %s 
+            ORDER BY created_at DESC 
+            LIMIT %s
+        """
+        rows = self.db.fetch_all(sql, (task_id, case_id, limit))
+        return [TestCaseChangeLog.from_dict(row) for row in rows]
+    
+    def get_by_task(
+        self,
+        task_id: str,
+        limit: int = 500,
+        offset: int = 0
+    ) -> list[TestCaseChangeLog]:
+        """获取任务的所有变更日志"""
+        sql = """
+            SELECT * FROM test_case_change_logs 
+            WHERE task_id = %s 
+            ORDER BY created_at DESC 
+            LIMIT %s OFFSET %s
+        """
+        rows = self.db.fetch_all(sql, (task_id, limit, offset))
+        return [TestCaseChangeLog.from_dict(row) for row in rows]
+    
+    def get_by_change_type(
+        self,
+        task_id: str,
+        change_type: ChangeType,
+        limit: int = 100
+    ) -> list[TestCaseChangeLog]:
+        """按变更类型获取日志"""
+        sql = """
+            SELECT * FROM test_case_change_logs 
+            WHERE task_id = %s AND change_type = %s 
+            ORDER BY created_at DESC 
+            LIMIT %s
+        """
+        rows = self.db.fetch_all(sql, (task_id, change_type.value, limit))
+        return [TestCaseChangeLog.from_dict(row) for row in rows]

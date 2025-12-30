@@ -10,9 +10,6 @@ from collections.abc import Generator
 
 import pymysql
 from pymysql.cursors import DictCursor
-from dotenv import load_dotenv
-
-load_dotenv()
 
 
 class DatabaseConfig:
@@ -113,7 +110,8 @@ class DatabaseManager:
         """查询多条记录"""
         with self.get_cursor() as cursor:
             cursor.execute(sql, params)
-            return cursor.fetchall()
+            result = cursor.fetchall()
+            return list(result) if result else []
     
     def init_database(self) -> None:
         """初始化数据库（创建数据库和表）"""

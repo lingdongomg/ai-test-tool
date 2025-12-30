@@ -12,7 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ai_test_tool.core import AITestTool
-from ai_test_tool.config import AppConfig, LLMConfig, TestConfig, OutputConfig
+from ai_test_tool.config import AppConfig, LLMConfig, TestConfig
 
 
 def main() -> int:
@@ -30,8 +30,8 @@ def main() -> int:
   # 执行测试
   python run.py -f logo.json --run-tests --base-url http://localhost:8080
 
-  # 指定输出目录
-  python run.py -f logo.json -o ./my_output
+  # 显示详细日志
+  python run.py -f logo.json -v
         """
     )
     
@@ -46,11 +46,6 @@ def main() -> int:
         type=int,
         default=None,
         help='最大处理行数'
-    )
-    parser.add_argument(
-        '-o', '--output',
-        default='./output',
-        help='输出目录 (默认: ./output)'
     )
     
     # LLM配置
@@ -95,14 +90,6 @@ def main() -> int:
         help='测试策略 (默认: comprehensive)'
     )
     
-    # 输出配置
-    parser.add_argument(
-        '--report-format',
-        choices=['markdown', 'html', 'json'],
-        default='markdown',
-        help='报告格式 (默认: markdown)'
-    )
-    
     # 日志级别
     parser.add_argument(
         '-v', '--verbose',
@@ -122,10 +109,6 @@ def main() -> int:
         test=TestConfig(
             base_url=args.base_url,
             concurrent_requests=args.concurrent
-        ),
-        output=OutputConfig(
-            output_dir=args.output,
-            report_format=args.report_format  # type: ignore
         )
     )
     
@@ -139,31 +122,36 @@ def main() -> int:
             max_lines=args.max_lines,
             test_strategy=args.test_strategy,
             run_tests=args.run_tests,
-            base_url=args.base_url,
-            output_dir=args.output
+            base_url=args.base_url
         )
         
-        print("\n📊 执行结果摘要:")
-        print(f"   解析请求数: {result['parsed_requests']}")
-        print(f"   生成测试用例: {result['test_cases']}")
+        tool.logger.separator()
+        tool.logger.info("执行结果摘要:")
+        tool.logger.info(f"   任务ID: {result['task_id']}")
+        tool.logger.info(f"   解析请求数: {result['parsed_requests']}")
+        tool.logger.info(f"   生成测试用例: {result['test_cases']}")
         
         if result.get('test_results'):
-            print(f"   执行测试数: {result['test_results']}")
+            tool.logger.info(f"   执行测试数: {result['test_results']}")
         
-        print("\n📁 输出文件:")
-        for name, path in result.get('exported_files', {}).items():
-            print(f"   - {name}: {path}")
+        tool.logger.info(f"   报告已存储: {', '.join(result.get('reports_saved', []))}")
+        tool.logger.separator()
         
         return 0
         
     except FileNotFoundError as e:
-        print(f"❌ 错误: {e}")
+        tool.logger.error(f"文件不存在: {e}")
+        return 1
+    except RuntimeError as e:
+        tool.logger.error(f"运行时错误: {e}")
         return 1
     except Exception as e:
-        print(f"❌ 执行失败: {e}")
+        tool.logger.error(f"执行失败: {e}")
         import traceback
         traceback.print_exc()
         return 1
+    finally:
+        tool.close()
 
 
 if __name__ == "__main__":
