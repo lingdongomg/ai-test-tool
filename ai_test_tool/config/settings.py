@@ -1,13 +1,27 @@
 """
 配置管理模块
 支持多种配置方式：环境变量、配置文件、代码配置
-Python 3.13+ 兼容
+使用 python-dotenv 自动加载 .env 文件
 """
 
 import os
+from pathlib import Path
 from typing import Literal, Self
+
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 自动加载 .env 文件
+from dotenv import load_dotenv
+
+# 查找项目根目录的 .env 文件
+_project_root = Path(__file__).parent.parent.parent
+_env_file = _project_root / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    # 尝试当前工作目录
+    load_dotenv()
 
 
 class LLMConfig(BaseModel):

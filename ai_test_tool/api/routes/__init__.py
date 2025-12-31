@@ -9,6 +9,7 @@ from . import executions
 from . import imports
 from . import analysis
 from . import versions
+from . import tasks
 
 __all__ = [
     "tags",
@@ -17,5 +18,6 @@ __all__ = [
     "executions",
     "imports",
     "analysis",
-    "versions"
+    "versions",
+    "tasks"
 ]

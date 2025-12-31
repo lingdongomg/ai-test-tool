@@ -14,6 +14,18 @@ const router = createRouter({
       meta: { title: '概览' }
     },
     {
+      path: '/tasks',
+      name: 'Tasks',
+      component: () => import('../views/Tasks.vue'),
+      meta: { title: '分析任务' }
+    },
+    {
+      path: '/tasks/:id',
+      name: 'TaskDetail',
+      component: () => import('../views/TaskDetail.vue'),
+      meta: { title: '任务详情' }
+    },
+    {
       path: '/endpoints',
       name: 'Endpoints',
       component: () => import('../views/Endpoints.vue'),

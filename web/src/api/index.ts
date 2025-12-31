@@ -94,4 +94,63 @@ export const analysisApi = {
     api.get('/analysis/knowledge-base/summary', { params: { max_count: maxCount } })
 }
 
+// 分析任务管理
+export const taskApi = {
+  // 获取任务列表
+  list: (params?: { status?: string; offset?: number; limit?: number }) => 
+    api.get('/tasks', { params }),
+  
+  // 获取任务详情
+  get: (taskId: string) => api.get(`/tasks/${taskId}`),
+  
+  // 获取任务结果
+  getResult: (taskId: string) => api.get(`/tasks/${taskId}/result`),
+  
+  // 上传日志文件并分析
+  uploadFile: (file: File, options?: { 
+    name?: string; 
+    max_lines?: number; 
+    test_strategy?: string;
+    async_mode?: boolean 
+  }) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (options?.name) formData.append('name', options.name)
+    if (options?.max_lines) formData.append('max_lines', String(options.max_lines))
+    if (options?.test_strategy) formData.append('test_strategy', options.test_strategy)
+    if (options?.async_mode !== undefined) formData.append('async_mode', String(options.async_mode))
+    return api.post('/tasks/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+  
+  // 直接分析日志内容
+  analyzeContent: (data: { 
+    log_content: string; 
+    name?: string; 
+    max_lines?: number;
+    test_strategy?: string;
+    async_mode?: boolean 
+  }) => api.post('/tasks/analyze-content', data),
+  
+  // 执行测试
+  runTests: (taskId: string, data: { 
+    base_url: string; 
+    concurrent?: number;
+    async_mode?: boolean 
+  }) => api.post(`/tasks/${taskId}/run-tests`, data),
+  
+  // 生成测试用例
+  generateCases: (taskId: string, data: { 
+    test_strategy?: string;
+    async_mode?: boolean 
+  }) => api.post(`/tasks/${taskId}/generate-cases`, data),
+  
+  // 取消任务
+  cancel: (taskId: string) => api.post(`/tasks/${taskId}/cancel`),
+  
+  // 删除任务
+  delete: (taskId: string) => api.delete(`/tasks/${taskId}`)
+}
+
 export default api

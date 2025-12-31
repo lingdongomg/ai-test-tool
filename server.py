@@ -7,9 +7,18 @@ Python 3.13+ 兼容
 import argparse
 import sys
 import os
+from pathlib import Path
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# 加载 .env 文件
+from dotenv import load_dotenv
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    load_dotenv()
 
 
 def main() -> int:
@@ -20,14 +29,14 @@ def main() -> int:
     
     parser.add_argument(
         '--host',
-        default='0.0.0.0',
-        help='监听地址 (默认: 0.0.0.0)'
+        default=os.getenv('SERVER_HOST', '0.0.0.0'),
+        help='监听地址 (默认: 0.0.0.0，可通过 SERVER_HOST 环境变量配置)'
     )
     parser.add_argument(
         '--port',
         type=int,
-        default=8000,
-        help='监听端口 (默认: 8000)'
+        default=int(os.getenv('SERVER_PORT', '8000')),
+        help='监听端口 (默认: 8000，可通过 SERVER_PORT 环境变量配置)'
     )
     parser.add_argument(
         '--reload',

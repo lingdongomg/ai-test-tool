@@ -1,6 +1,5 @@
 """
 数据模型定义
-Python 3.13+ 兼容
 """
 
 import json

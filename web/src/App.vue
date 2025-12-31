@@ -14,6 +14,10 @@
           <template #icon><DashboardIcon /></template>
           概览
         </t-menu-item>
+        <t-menu-item value="tasks">
+          <template #icon><RocketIcon /></template>
+          分析任务
+        </t-menu-item>
         <t-menu-item value="endpoints">
           <template #icon><ApiIcon /></template>
           接口管理
@@ -58,7 +62,8 @@ import {
   TagIcon, 
   FileImportIcon, 
   TaskIcon,
-  ChartAnalyticsIcon
+  ChartAnalyticsIcon,
+  RocketIcon
 } from 'tdesign-icons-vue-next'
 
 const route = useRoute()
@@ -67,6 +72,7 @@ const router = useRouter()
 const activeMenu = computed(() => {
   const name = route.name as string
   if (name === 'ScenarioDetail') return 'scenarios'
+  if (name === 'TaskDetail') return 'tasks'
   return name?.toLowerCase() || 'dashboard'
 })
 

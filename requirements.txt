@@ -1,6 +1,9 @@
 # AI Test Tool - Python 3.13+ Dependencies
 # Last updated: 2025-01-01
 
+# Environment Variables
+python-dotenv>=1.0.0
+
 # LangChain Core
 langchain>=1.2.0
 langchain-core>=0.3.0
