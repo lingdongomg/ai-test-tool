@@ -32,33 +32,202 @@ class BaseChain:
         self.logger = get_logger(verbose)
     
     def _parse_json_response(self, response: str) -> dict[str, Any]:
-        """解析JSON响应"""
-        # 尝试直接解析
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            pass
+        """
+        解析JSON响应
         
-        # 尝试提取JSON块
+        尝试多种方式解析AI返回的JSON，并记录详细的DEBUG日志
+        """
+        self.logger.debug(f"开始解析JSON响应，响应长度: {len(response)} 字符")
+        
+        # 预处理：去除可能的BOM和首尾空白
+        response = response.strip().lstrip('\ufeff')
+        
+        # 预处理：移除深度思考模型的 <think>...</think> 标签
+        # 支持 DeepSeek、QwQ 等模型的思考过程输出
+        think_match = re.search(r'<think>[\s\S]*?</think>\s*', response)
+        if think_match:
+            think_content = think_match.group(0)
+            self.logger.debug(f"检测到思考标签，长度: {len(think_content)} 字符，已移除")
+            response = response[len(think_content):].strip()
+        
+        # 方法1: 尝试直接解析
+        try:
+            result = json.loads(response)
+            self.logger.debug("JSON解析成功（直接解析）")
+            return result
+        except json.JSONDecodeError as e:
+            self.logger.debug(f"直接解析失败: {e}")
+        
+        # 方法2: 尝试提取```json```代码块
         json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
         if json_match:
+            json_str = json_match.group(1).strip()
             try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(json_str)
+                self.logger.debug("JSON解析成功（从代码块提取）")
+                return result
+            except json.JSONDecodeError as e:
+                self.logger.debug(f"代码块JSON解析失败: {e}")
         
-        # 尝试找到JSON对象
+        # 方法3: 尝试找到最外层的JSON对象 {}
         start = response.find('{')
         end = response.rfind('}') + 1
         if start >= 0 and end > start:
+            json_str = response[start:end]
             try:
-                return json.loads(response[start:end])
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(json_str)
+                self.logger.debug("JSON解析成功（提取花括号内容）")
+                return result
+            except json.JSONDecodeError as e:
+                self.logger.debug(f"花括号内容解析失败: {e}")
+                
+                # 方法4: 尝试修复常见的JSON格式问题
+                fixed_json = self._try_fix_json(json_str)
+                if fixed_json:
+                    try:
+                        result = json.loads(fixed_json)
+                        self.logger.debug("JSON解析成功（修复后）")
+                        return result
+                    except json.JSONDecodeError as e:
+                        self.logger.debug(f"修复后解析仍失败: {e}")
         
-        # 返回原始响应
-        self.logger.warn("JSON解析失败，返回原始响应")
+        # 方法5: 尝试找到JSON数组 []
+        start = response.find('[')
+        end = response.rfind(']') + 1
+        if start >= 0 and end > start:
+            json_str = response[start:end]
+            try:
+                result = json.loads(json_str)
+                self.logger.debug("JSON解析成功（提取数组）")
+                return {"data": result}  # 包装为对象
+            except json.JSONDecodeError as e:
+                self.logger.debug(f"数组解析失败: {e}")
+        
+        # 方法6: 尝试修复被截断的JSON（AI输出因max_tokens被截断）
+        start = response.find('{')
+        if start >= 0:
+            truncated_json = response[start:]
+            result = self._try_fix_truncated_json(truncated_json)
+            if result:
+                self.logger.debug("JSON解析成功（截断修复）")
+                return result
+        
+        # 所有方法都失败，记录警告和完整响应（用于调试）
+        self.logger.warn(f"JSON解析失败，返回原始响应")
+        # 记录完整响应到DEBUG日志，便于排查问题
+        self.logger.debug(f"原始响应完整内容:\n{response}")
+        
         return {"raw_response": response, "parse_error": True}
+    
+    def _try_fix_json(self, json_str: str) -> str | None:
+        """
+        尝试修复常见的JSON格式问题
+        
+        Args:
+            json_str: 可能有问题的JSON字符串
+            
+        Returns:
+            修复后的JSON字符串，如果无法修复则返回None
+        """
+        try:
+            # 修复1: 移除尾部逗号（常见于AI生成的JSON）
+            # 例如: {"a": 1,} -> {"a": 1}
+            fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
+            
+            # 修复2: 处理单引号（某些AI可能用单引号）
+            # 注意：这个修复可能不完美，但对简单情况有效
+            if "'" in fixed and '"' not in fixed:
+                fixed = fixed.replace("'", '"')
+            
+            # 修复3: 处理未转义的换行符
+            fixed = fixed.replace('\n', '\\n').replace('\r', '\\r')
+            # 但保留JSON结构中的换行
+            fixed = re.sub(r'\\n\s*([{\[\]}:,"])', lambda m: '\n' + m.group(1), fixed)
+            
+            # 修复4: 处理注释（某些AI可能添加注释）
+            fixed = re.sub(r'//.*$', '', fixed, flags=re.MULTILINE)
+            fixed = re.sub(r'/\*.*?\*/', '', fixed, flags=re.DOTALL)
+            
+            return fixed if fixed != json_str else None
+        except Exception:
+            return None
+    
+    def _try_fix_truncated_json(self, json_str: str) -> dict[str, Any] | None:
+        """
+        尝试修复被截断的JSON（AI输出因max_tokens限制被截断）
+        
+        Args:
+            json_str: 被截断的JSON字符串
+            
+        Returns:
+            修复后的字典，如果无法修复则返回None
+        """
+        try:
+            # 统计未闭合的括号
+            open_braces = json_str.count('{') - json_str.count('}')
+            open_brackets = json_str.count('[') - json_str.count(']')
+            
+            if open_braces <= 0 and open_brackets <= 0:
+                return None  # 括号已平衡，不是截断问题
+            
+            self.logger.debug(f"检测到截断JSON: 未闭合 {{ = {open_braces}, [ = {open_brackets}")
+            
+            # 尝试找到最后一个完整的对象/数组元素
+            # 策略：从后往前找到最后一个逗号或冒号后的位置，截断到那里
+            
+            # 移除末尾不完整的内容（找到最后一个完整的值）
+            # 常见模式：截断在字符串中间、数字中间、或对象/数组中间
+            
+            fixed = json_str.rstrip()
+            
+            # 如果以逗号结尾，移除逗号
+            fixed = re.sub(r',\s*$', '', fixed)
+            
+            # 如果在字符串中间被截断（有未闭合的引号）
+            quote_count = fixed.count('"') - fixed.count('\\"')
+            if quote_count % 2 == 1:
+                # 找到最后一个未转义的引号位置
+                last_quote = fixed.rfind('"')
+                if last_quote > 0:
+                    # 检查这个引号是否是键的开始
+                    before_quote = fixed[:last_quote].rstrip()
+                    if before_quote.endswith(':') or before_quote.endswith(',') or before_quote.endswith('[') or before_quote.endswith('{'):
+                        # 这是一个值的开始，截断到冒号/逗号之前
+                        if before_quote.endswith(':'):
+                            fixed = before_quote[:-1].rstrip()
+                            # 还需要移除键
+                            key_match = re.search(r',?\s*"[^"]*"\s*$', fixed)
+                            if key_match:
+                                fixed = fixed[:key_match.start()]
+                        else:
+                            fixed = before_quote[:-1] if before_quote[-1] in ',{[' else before_quote
+                    else:
+                        # 在值中间被截断，添加闭合引号
+                        fixed = fixed + '"'
+            
+            # 移除末尾不完整的键值对
+            # 模式: "key": 没有值
+            fixed = re.sub(r',?\s*"[^"]*"\s*:\s*$', '', fixed)
+            
+            # 移除末尾的逗号
+            fixed = re.sub(r',\s*$', '', fixed)
+            
+            # 补全缺失的闭合括号
+            open_braces = fixed.count('{') - fixed.count('}')
+            open_brackets = fixed.count('[') - fixed.count(']')
+            
+            # 按照嵌套顺序补全（简化处理：先补]再补}）
+            fixed += ']' * open_brackets
+            fixed += '}' * open_braces
+            
+            # 尝试解析修复后的JSON
+            result = json.loads(fixed)
+            self.logger.debug(f"截断JSON修复成功")
+            return result
+            
+        except Exception as e:
+            self.logger.debug(f"截断JSON修复失败: {e}")
+            return None
     
     def _call_llm(self, prompt: str, operation: str) -> str:
         """调用LLM并记录日志"""
@@ -76,19 +245,56 @@ class BaseChain:
 class LogAnalysisChain(BaseChain):
     """日志分析Chain - 核心智能分析"""
     
-    def analyze_logs(self, log_content: str) -> dict[str, Any]:
+    # 重试提示词 - 当AI没有输出JSON时使用
+    RETRY_PROMPT = """你之前的回复没有按要求输出JSON格式。请重新分析并**只输出JSON**，不要输出任何解释文字。
+
+原始日志内容：
+```
+{log_content}
+```
+
+请直接输出符合以下格式的JSON（如果没有HTTP请求，requests数组为空）：
+```json
+{{
+  "requests": [],
+  "errors": [],
+  "warnings": [],
+  "analysis": {{"total_requests": 0, "success_count": 0, "error_count": 0, "warning_count": 0, "observations": []}}
+}}
+```
+
+只输出JSON："""
+    
+    def analyze_logs(self, log_content: str, max_retries: int = 2) -> dict[str, Any]:
         """
-        智能分析日志内容
+        智能分析日志内容，支持失败重试
         
         Args:
             log_content: 日志内容（可以是多行）
+            max_retries: 最大重试次数（默认2次）
             
         Returns:
             分析结果，包含requests、errors、warnings、analysis
         """
         prompt = LOG_ANALYSIS_PROMPT.format(log_content=log_content)
-        response = self._call_llm(prompt, "日志分析")
-        result = self._parse_json_response(response)
+        result: dict[str, Any] = {"parse_error": True}  # 初始化
+        
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                # 重试时使用更简洁的提示词
+                self.logger.debug(f"JSON解析失败，进行第 {attempt} 次重试")
+                prompt = self.RETRY_PROMPT.format(log_content=log_content)
+            
+            response = self._call_llm(prompt, "日志分析")
+            result = self._parse_json_response(response)
+            
+            # 检查是否解析成功（不是原始响应）
+            if not result.get("parse_error"):
+                break
+            
+            # 如果还有重试机会，继续
+            if attempt < max_retries:
+                self.logger.debug(f"将进行重试...")
         
         # 确保返回结构完整
         if "requests" not in result:

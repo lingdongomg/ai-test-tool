@@ -58,11 +58,11 @@ CREATE TABLE IF NOT EXISTS `parsed_requests` (
     FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='解析请求表';
 
--- 测试用例表
+-- 测试用例表（以接口为维度）
 CREATE TABLE IF NOT EXISTS `test_cases` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-    `case_id` VARCHAR(64) NOT NULL COMMENT '用例唯一ID',
+    `case_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '用例唯一ID',
+    `endpoint_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID',
     `name` VARCHAR(255) NOT NULL COMMENT '用例名称',
     `description` TEXT COMMENT '用例描述',
     `category` ENUM('normal', 'boundary', 'exception', 'performance', 'security') DEFAULT 'normal' COMMENT '用例类别',
@@ -74,26 +74,24 @@ CREATE TABLE IF NOT EXISTS `test_cases` (
     `query_params` JSON COMMENT '查询参数',
     `expected_status_code` INT DEFAULT 200 COMMENT '期望状态码',
     `expected_response` JSON COMMENT '期望响应',
+    `assertions` JSON COMMENT '断言规则',
     `max_response_time_ms` INT DEFAULT 3000 COMMENT '最大响应时间',
     `tags` JSON COMMENT '标签',
-    `group_name` VARCHAR(100) COMMENT '分组名称',
-    `dependencies` JSON COMMENT '依赖用例ID',
     `is_enabled` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+    `is_ai_generated` TINYINT(1) DEFAULT 0 COMMENT '是否AI生成',
+    `source_task_id` VARCHAR(64) COMMENT '来源任务ID（AI生成时）',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY `uk_task_case` (`task_id`, `case_id`),
-    INDEX `idx_task_id` (`task_id`),
+    INDEX `idx_endpoint_id` (`endpoint_id`),
     INDEX `idx_category` (`category`),
     INDEX `idx_priority` (`priority`),
-    INDEX `idx_group_name` (`group_name`),
     INDEX `idx_is_enabled` (`is_enabled`),
-    FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
+    INDEX `idx_is_ai_generated` (`is_ai_generated`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例表';
 
--- 测试结果表
+-- 测试结果表（单个测试用例的执行结果）
 CREATE TABLE IF NOT EXISTS `test_results` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
     `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
     `execution_id` VARCHAR(64) NOT NULL COMMENT '执行批次ID',
     `status` ENUM('passed', 'failed', 'error', 'skipped') NOT NULL COMMENT '执行状态',
@@ -102,16 +100,53 @@ CREATE TABLE IF NOT EXISTS `test_results` (
     `actual_response_body` TEXT COMMENT '实际响应体',
     `actual_headers` JSON COMMENT '实际响应头',
     `error_message` TEXT COMMENT '错误信息',
-    `validation_results` JSON COMMENT '验证结果',
+    `assertion_results` JSON COMMENT '断言结果',
     `executed_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '执行时间',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_task_id` (`task_id`),
     INDEX `idx_case_id` (`case_id`),
     INDEX `idx_execution_id` (`execution_id`),
     INDEX `idx_status` (`status`),
-    INDEX `idx_executed_at` (`executed_at`),
-    FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
+    INDEX `idx_executed_at` (`executed_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试结果表';
+
+-- 测试执行批次表
+CREATE TABLE IF NOT EXISTS `test_executions` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `execution_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '执行唯一ID',
+    `name` VARCHAR(255) COMMENT '执行名称',
+    `description` TEXT COMMENT '执行描述',
+    `trigger_type` ENUM('manual', 'scheduled', 'pipeline', 'api') DEFAULT 'manual' COMMENT '触发类型',
+    `status` ENUM('pending', 'running', 'completed', 'cancelled') DEFAULT 'pending' COMMENT '执行状态',
+    `base_url` VARCHAR(512) COMMENT '测试目标URL',
+    `environment` VARCHAR(50) COMMENT '执行环境',
+    `variables` JSON COMMENT '全局变量',
+    `headers` JSON COMMENT '全局请求头',
+    `total_cases` INT DEFAULT 0 COMMENT '总用例数',
+    `passed_cases` INT DEFAULT 0 COMMENT '通过用例数',
+    `failed_cases` INT DEFAULT 0 COMMENT '失败用例数',
+    `error_cases` INT DEFAULT 0 COMMENT '错误用例数',
+    `skipped_cases` INT DEFAULT 0 COMMENT '跳过用例数',
+    `duration_ms` BIGINT DEFAULT 0 COMMENT '执行耗时(ms)',
+    `error_message` TEXT COMMENT '错误信息',
+    `scheduled_task_id` VARCHAR(64) COMMENT '关联定时任务ID',
+    `started_at` DATETIME COMMENT '开始时间',
+    `completed_at` DATETIME COMMENT '完成时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_status` (`status`),
+    INDEX `idx_trigger_type` (`trigger_type`),
+    INDEX `idx_scheduled_task_id` (`scheduled_task_id`),
+    INDEX `idx_started_at` (`started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试执行批次表';
+
+-- 执行-用例关联表（记录每次执行包含哪些用例）
+CREATE TABLE IF NOT EXISTS `execution_cases` (
+    `execution_id` VARCHAR(64) NOT NULL COMMENT '执行ID',
+    `case_id` VARCHAR(64) NOT NULL COMMENT '用例ID',
+    `order_index` INT DEFAULT 0 COMMENT '执行顺序',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`execution_id`, `case_id`),
+    INDEX `idx_case_id` (`case_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='执行用例关联表';
 
 -- 分析报告表
 CREATE TABLE IF NOT EXISTS `analysis_reports` (
@@ -317,14 +352,24 @@ CREATE TABLE IF NOT EXISTS `scheduled_tasks` (
     `task_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '任务唯一ID',
     `name` VARCHAR(255) NOT NULL COMMENT '任务名称',
     `description` TEXT COMMENT '任务描述',
-    `scenario_ids` JSON NOT NULL COMMENT '关联场景ID列表',
     `cron_expression` VARCHAR(100) NOT NULL COMMENT 'Cron表达式',
+    `case_ids` JSON COMMENT '要执行的测试用例ID列表',
+    `endpoint_ids` JSON COMMENT '要执行的接口ID列表',
+    `tag_names` JSON COMMENT '按标签筛选',
     `base_url` VARCHAR(512) COMMENT '测试目标URL',
     `environment` VARCHAR(50) COMMENT '执行环境',
     `variables` JSON COMMENT '执行变量',
+    `headers` JSON COMMENT '全局请求头',
+    `notify_on_failure` TINYINT(1) DEFAULT 1 COMMENT '失败时是否通知',
+    `notify_channels` JSON COMMENT '通知渠道',
+    `notify_config` JSON COMMENT '通知配置',
     `is_enabled` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
     `last_run_at` DATETIME COMMENT '上次执行时间',
+    `last_run_status` VARCHAR(20) COMMENT '上次执行状态',
     `next_run_at` DATETIME COMMENT '下次执行时间',
+    `run_count` INT DEFAULT 0 COMMENT '执行次数',
+    `success_count` INT DEFAULT 0 COMMENT '成功次数',
+    `failure_count` INT DEFAULT 0 COMMENT '失败次数',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX `idx_is_enabled` (`is_enabled`),
@@ -339,8 +384,8 @@ CREATE TABLE IF NOT EXISTS `scheduled_tasks` (
 CREATE TABLE IF NOT EXISTS `test_case_versions` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     `version_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '版本唯一ID',
-    `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
     `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
+    `endpoint_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID',
     `version_number` INT NOT NULL COMMENT '版本号（从1开始递增）',
     `name` VARCHAR(255) NOT NULL COMMENT '用例名称',
     `description` TEXT COMMENT '用例描述',
@@ -353,26 +398,25 @@ CREATE TABLE IF NOT EXISTS `test_case_versions` (
     `query_params` JSON COMMENT '查询参数',
     `expected_status_code` INT DEFAULT 200 COMMENT '期望状态码',
     `expected_response` JSON COMMENT '期望响应',
+    `assertions` JSON COMMENT '断言规则',
     `max_response_time_ms` INT DEFAULT 3000 COMMENT '最大响应时间',
     `tags` JSON COMMENT '标签',
-    `group_name` VARCHAR(100) COMMENT '分组名称',
-    `dependencies` JSON COMMENT '依赖用例ID',
     `change_type` ENUM('create', 'update', 'delete', 'restore') DEFAULT 'create' COMMENT '变更类型',
     `change_summary` VARCHAR(500) COMMENT '变更摘要',
     `changed_fields` JSON COMMENT '变更的字段列表',
     `changed_by` VARCHAR(100) COMMENT '变更人',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '版本创建时间',
-    INDEX `idx_task_case` (`task_id`, `case_id`),
-    INDEX `idx_version_number` (`task_id`, `case_id`, `version_number`),
-    INDEX `idx_created_at` (`created_at`),
-    FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
+    INDEX `idx_case_id` (`case_id`),
+    INDEX `idx_endpoint_id` (`endpoint_id`),
+    INDEX `idx_version_number` (`case_id`, `version_number`),
+    INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例版本表';
 
 -- 测试用例变更日志表（轻量级变更记录）
 CREATE TABLE IF NOT EXISTS `test_case_change_logs` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
     `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
+    `endpoint_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID',
     `version_id` VARCHAR(64) NOT NULL COMMENT '关联版本ID',
     `change_type` ENUM('create', 'update', 'delete', 'restore', 'enable', 'disable') NOT NULL COMMENT '变更类型',
     `change_summary` VARCHAR(500) COMMENT '变更摘要',
@@ -382,9 +426,9 @@ CREATE TABLE IF NOT EXISTS `test_case_change_logs` (
     `ip_address` VARCHAR(50) COMMENT 'IP地址',
     `user_agent` VARCHAR(500) COMMENT 'User-Agent',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_task_case` (`task_id`, `case_id`),
+    INDEX `idx_case_id` (`case_id`),
+    INDEX `idx_endpoint_id` (`endpoint_id`),
     INDEX `idx_version_id` (`version_id`),
     INDEX `idx_change_type` (`change_type`),
-    INDEX `idx_created_at` (`created_at`),
-    FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
+    INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例变更日志表';

@@ -77,6 +77,7 @@
               :columns="previewColumns"
               size="small"
               :pagination="false"
+              row-key="path"
             >
               <template #method="{ row }">
                 <t-tag :theme="getMethodTheme(row.method)" size="small">{{ row.method }}</t-tag>
@@ -90,7 +91,7 @@
     </t-row>
 
     <t-card title="导入历史" :bordered="false" class="mt-4">
-      <t-table :data="importHistory" :columns="historyColumns" size="small">
+      <t-table :data="importHistory" :columns="historyColumns" size="small" row-key="id">
         <template #status="{ row }">
           <t-tag :theme="row.status === 'success' ? 'success' : 'danger'">
             {{ row.status === 'success' ? '成功' : '失败' }}
@@ -164,33 +165,93 @@ const getContent = async () => {
 }
 
 const handlePreview = async () => {
-  const content = await getContent()
-  if (!content) return
-
   previewLoading.value = true
-  const result = await importApi.preview({
-    content,
-    doc_type: formData.value.docType
-  })
-  previewResult.value = result
-  previewLoading.value = false
+  try {
+    if (importMode.value === 'file') {
+      if (fileList.value.length === 0) {
+        MessagePlugin.warning('请选择文件')
+        return
+      }
+      const file = fileList.value[0].raw
+      const result = await importApi.preview(file, formData.value.docType)
+      previewResult.value = result
+    } else {
+      // JSON 模式：在前端解析预览
+      if (!formData.value.jsonContent) {
+        MessagePlugin.warning('请输入JSON内容')
+        return
+      }
+      const content = JSON.parse(formData.value.jsonContent)
+      // 简单解析预览
+      const isSwagger = content.swagger || content.openapi
+      const endpoints: any[] = []
+      const tags: string[] = []
+      
+      if (isSwagger && content.paths) {
+        Object.entries(content.paths).forEach(([path, methods]: [string, any]) => {
+          Object.entries(methods).forEach(([method, info]: [string, any]) => {
+            if (['get', 'post', 'put', 'delete', 'patch'].includes(method)) {
+              endpoints.push({
+                method: method.toUpperCase(),
+                path,
+                name: info.summary || info.operationId || path
+              })
+              if (info.tags) {
+                info.tags.forEach((t: string) => {
+                  if (!tags.includes(t)) tags.push(t)
+                })
+              }
+            }
+          })
+        })
+      }
+      
+      previewResult.value = {
+        doc_type: isSwagger ? 'swagger' : 'unknown',
+        endpoint_count: endpoints.length,
+        tag_count: tags.length,
+        endpoints,
+        tags: tags.map(t => ({ name: t }))
+      }
+    }
+  } catch (e: any) {
+    MessagePlugin.error(e.message || '预览失败')
+  } finally {
+    previewLoading.value = false
+  }
 }
 
 const handleSubmit = async () => {
-  const content = await getContent()
-  if (!content) return
-
   submitLoading.value = true
-  
-  const result = await importApi.importJson({
-    content,
-    doc_type: formData.value.docType,
-    source_name: fileList.value[0]?.name || 'manual_import'
-  })
-  
-  MessagePlugin.success(`导入成功：${(result as any).endpoint_count} 个接口，${(result as any).tag_count} 个标签`)
-  previewResult.value = result
-  submitLoading.value = false
+  try {
+    if (importMode.value === 'file') {
+      if (fileList.value.length === 0) {
+        MessagePlugin.warning('请选择文件')
+        return
+      }
+      const file = fileList.value[0].raw
+      const result = await importApi.uploadFile(file, formData.value.docType)
+      MessagePlugin.success(`导入成功：${(result as any).endpoint_count} 个接口，${(result as any).tag_count} 个标签`)
+      previewResult.value = result
+    } else {
+      const content = await getContent()
+      if (!content) return
+      
+      const result = await importApi.importJson({
+        content,
+        doc_type: formData.value.docType,
+        source_name: 'manual_import',
+        update_strategy: formData.value.updateStrategy
+      })
+      
+      MessagePlugin.success(`导入成功：${(result as any).endpoint_count} 个接口，${(result as any).tag_count} 个标签`)
+      previewResult.value = result
+    }
+  } catch (e: any) {
+    MessagePlugin.error(e.message || '导入失败')
+  } finally {
+    submitLoading.value = false
+  }
 }
 </script>
 

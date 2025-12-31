@@ -326,7 +326,7 @@ async def get_supported_formats():
 
 def _get_existing_endpoints() -> list:
     """获取数据库中的现有接口"""
-    from ...database.models import ApiEndpoint, SourceType
+    from ...database.models import ApiEndpoint, EndpointSourceType
     
     db = get_db_manager()
     rows = db.fetch_all("SELECT * FROM api_endpoints")
@@ -344,7 +344,7 @@ def _get_existing_endpoints() -> list:
             request_body=json.loads(row['request_body']) if row.get('request_body') else None,
             responses=json.loads(row['responses']) if row.get('responses') else None,
             tags=[],  # 标签单独查询
-            source_type=SourceType(row.get('source_type', 'manual')),
+            source_type=EndpointSourceType(row.get('source_type', 'manual')),
             is_deprecated=row.get('is_deprecated', False)
         )
         ep.id = row.get('id')
@@ -374,11 +374,13 @@ def _save_import_result_with_strategy(
     
     # 保存标签
     for tag_name in result.tags:
-        existing = db.fetch_one("SELECT id FROM api_tags WHERE name = %s", (tag_name,))
+        # 截断标签名，api_tags.name 是 VARCHAR(50)
+        tag_name_truncated = (tag_name or "")[:50]
+        existing = db.fetch_one("SELECT id FROM api_tags WHERE name = %s", (tag_name_truncated,))
         if not existing:
             db.execute(
                 "INSERT INTO api_tags (name, description) VALUES (%s, %s)",
-                (tag_name, f"从 {source_file} 导入")
+                (tag_name_truncated, f"从 {source_file} 导入"[:255])
             )
     
     # 获取现有接口
@@ -426,13 +428,19 @@ def _create_endpoint(db, endpoint, source_file: str) -> None:
          parameters, request_body, responses, source_type, source_file, is_deprecated)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
+    # 截断过长字段，防止数据库报错
+    # TEXT 类型在 utf8mb4 下最大约 16000 字符安全值
+    name = (endpoint.name or "")[:255]
+    summary = (endpoint.summary or "")[:500]
+    description = (endpoint.description or "")[:16000]
+    
     db.execute(sql, (
         endpoint.endpoint_id,
-        endpoint.name,
-        endpoint.description,
+        name,
+        description,
         endpoint.method,
         endpoint.path,
-        endpoint.summary,
+        summary,
         json.dumps(endpoint.parameters, ensure_ascii=False) if endpoint.parameters else None,
         json.dumps(endpoint.request_body, ensure_ascii=False) if endpoint.request_body else None,
         json.dumps(endpoint.responses, ensure_ascii=False) if endpoint.responses else None,
@@ -455,10 +463,15 @@ def _update_endpoint(db, endpoint, source_file: str) -> None:
             updated_at = NOW()
         WHERE endpoint_id = %s
     """
+    # 截断过长字段
+    name = (endpoint.name or "")[:255]
+    summary = (endpoint.summary or "")[:500]
+    description = (endpoint.description or "")[:16000]
+    
     db.execute(sql, (
-        endpoint.name,
-        endpoint.description,
-        endpoint.summary,
+        name,
+        description,
+        summary,
         json.dumps(endpoint.parameters, ensure_ascii=False) if endpoint.parameters else None,
         json.dumps(endpoint.request_body, ensure_ascii=False) if endpoint.request_body else None,
         json.dumps(endpoint.responses, ensure_ascii=False) if endpoint.responses else None,

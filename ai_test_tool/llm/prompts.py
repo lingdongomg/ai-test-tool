@@ -18,7 +18,8 @@ LOG_ANALYSIS_PROMPT = """你是一位资深的后端开发工程师和日志分�
 4. 分析请求之间的关联关系
 
 ## 输出格式
-请严格按照以下JSON格式输出：
+**重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容（如解释、说明等）。**
+
 ```json
 {{
   "requests": [
@@ -29,13 +30,13 @@ LOG_ANALYSIS_PROMPT = """你是一位资深的后端开发工程师和日志分�
       "url": "请求URL路径",
       "headers": {{"header名": "header值"}},
       "body": "请求体（JSON字符串或null）",
+      "query_params": {{"参数名": "参数值"}},
       "http_status": 状态码数字,
       "response_time_ms": 响应时间毫秒数,
       "has_error": true/false,
       "error_message": "错误信息或空字符串",
       "has_warning": true/false,
-      "warning_message": "警告信息或空字符串",
-      "curl_command": "完整的curl命令"
+      "warning_message": "警告信息或空字符串"
     }}
   ],
   "errors": [
@@ -66,12 +67,14 @@ LOG_ANALYSIS_PROMPT = """你是一位资深的后端开发工程师和日志分�
 ```
 
 ## 注意事项
-1. 如果某个字段在日志中找不到，使用合理的默认值
-2. curl命令要完整可执行，包含所有必要的headers和body
+1. **只输出JSON，不要输出任何解释或说明文字**
+2. 如果某个字段在日志中找不到，使用合理的默认值
 3. 仔细分析日志格式，不同系统的日志格式可能不同
 4. 识别关联的日志行（同一请求可能有多行日志）
+5. 如果日志中没有HTTP请求信息，返回空的requests数组
+6. URL中的查询参数应同时提取到query_params字段中
 
-请开始分析："""
+请直接输出JSON："""
 
 
 # 日志分类Prompt
@@ -169,6 +172,8 @@ TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根�
 - security: 安全测试（注入、越权、敏感信息）
 
 ## 输出格式
+**重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容。**
+
 ```json
 {{
   "test_cases": [
@@ -179,18 +184,37 @@ TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根�
       "category": "normal/boundary/exception/security",
       "priority": "high/medium/low",
       "method": "HTTP方法",
-      "url": "请求URL",
-      "headers": {{}},
-      "body": {{}},
+      "url": "请求URL（不含查询参数）",
+      "headers": {{"header名": "header值"}},
+      "body": {{"字段名": "字段值"}},
+      "query_params": {{"参数名": "参数值"}},
       "expected_status": 200,
-      "expected_response_contains": ["期望响应包含的字段"],
-      "validation_rules": ["验证规则"]
+      "expected_response": {{
+        "fields": ["期望响应包含的字段"],
+        "values": {{"字段名": "期望值（可选）"}}
+      }},
+      "assertions": [
+        {{
+          "type": "status_code/response_time/json_path/contains/not_contains",
+          "target": "验证目标（如：$.data.id）",
+          "operator": "eq/ne/gt/lt/gte/lte/contains/not_contains/exists/not_exists",
+          "expected": "期望值"
+        }}
+      ],
+      "max_response_time_ms": 3000
     }}
   ]
 }}
 ```
 
-请生成测试用例："""
+## 断言类型说明
+- status_code: 验证HTTP状态码
+- response_time: 验证响应时间
+- json_path: 使用JSONPath验证响应字段
+- contains: 响应体包含指定内容
+- not_contains: 响应体不包含指定内容
+
+请直接输出JSON："""
 
 
 # 结果验证Prompt
@@ -233,8 +257,8 @@ RESULT_VALIDATION_PROMPT = """你是一位测试专家，请验证以下测试�
 请验证："""
 
 
-# Curl命令生成Prompt
-CURL_GENERATION_PROMPT = """请根据以下请求信息生成curl命令。
+# Curl命令生成Prompt（保留但标记为可选，用于调试）
+CURL_GENERATION_PROMPT = """请根据以下请求信息生成curl命令（仅用于调试目的）。
 
 ## 请求信息
 ```json
@@ -245,15 +269,16 @@ CURL_GENERATION_PROMPT = """请根据以下请求信息生成curl命令。
 {base_url}
 
 ## 输出格式
+**重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容。**
+
 ```json
 {{
   "curl_command": "完整的curl命令（单行）",
-  "curl_command_formatted": "格式化的curl命令（多行，便于阅读）",
-  "notes": "注意事项"
+  "curl_command_formatted": "格式化的curl命令（多行，便于阅读）"
 }}
 ```
 
-请生成curl命令："""
+请直接输出JSON："""
 
 
 # 日志问题诊断Prompt
@@ -445,6 +470,8 @@ TEST_CASE_GENERATION_WITH_RAG_PROMPT = """你是一位资深的测试工程师�
 4. **验证响应格式**：根据文档中的响应定义设计验证规则
 
 ## 输出格式
+**重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容。**
+
 ```json
 {{
   "test_cases": [
@@ -455,12 +482,24 @@ TEST_CASE_GENERATION_WITH_RAG_PROMPT = """你是一位资深的测试工程师�
       "category": "normal/boundary/exception/security",
       "priority": "high/medium/low",
       "method": "HTTP方法",
-      "url": "请求URL",
-      "headers": {{}},
-      "body": {{}},
+      "url": "请求URL（不含查询参数）",
+      "headers": {{"header名": "header值"}},
+      "body": {{"字段名": "字段值"}},
+      "query_params": {{"参数名": "参数值"}},
       "expected_status": 200,
-      "expected_response_contains": ["期望响应包含的字段"],
-      "validation_rules": ["验证规则"],
+      "expected_response": {{
+        "fields": ["期望响应包含的字段"],
+        "values": {{"字段名": "期望值（可选）"}}
+      }},
+      "assertions": [
+        {{
+          "type": "status_code/response_time/json_path/contains/not_contains",
+          "target": "验证目标（如：$.data.id）",
+          "operator": "eq/ne/gt/lt/gte/lte/contains/not_contains/exists/not_exists",
+          "expected": "期望值"
+        }}
+      ],
+      "max_response_time_ms": 3000,
       "doc_reference": "引用的文档接口（如有）"
     }}
   ],
@@ -468,4 +507,4 @@ TEST_CASE_GENERATION_WITH_RAG_PROMPT = """你是一位资深的测试工程师�
 }}
 ```
 
-请生成测试用例："""
+请直接输出JSON："""

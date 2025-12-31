@@ -10,6 +10,8 @@ from . import imports
 from . import analysis
 from . import versions
 from . import tasks
+from . import test_cases
+from .tasks import is_task_cancelled
 
 __all__ = [
     "tags",
@@ -19,5 +21,7 @@ __all__ = [
     "imports",
     "analysis",
     "versions",
-    "tasks"
+    "tasks",
+    "test_cases",
+    "is_task_cancelled"
 ]

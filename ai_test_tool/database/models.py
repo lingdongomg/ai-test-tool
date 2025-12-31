@@ -48,6 +48,22 @@ class ReportType(Enum):
     SUMMARY = "summary"
 
 
+class TriggerType(Enum):
+    """触发类型"""
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+    PIPELINE = "pipeline"
+    API = "api"
+
+
+class ExecutionStatus(Enum):
+    """执行状态"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 @dataclass
 class AnalysisTask:
     """分析任务模型"""
@@ -127,9 +143,12 @@ class ParsedRequestRecord:
 
 @dataclass
 class TestCaseRecord:
-    """测试用例记录模型"""
-    task_id: str
+    """测试用例记录模型
+    
+    测试用例以接口(endpoint)为维度进行管理，一个接口可以有多个测试用例。
+    """
     case_id: str
+    endpoint_id: str  # 关联接口ID
     name: str
     method: str
     url: str
@@ -141,11 +160,12 @@ class TestCaseRecord:
     query_params: dict[str, str] = field(default_factory=dict)
     expected_status_code: int = 200
     expected_response: dict[str, Any] = field(default_factory=dict)
+    assertions: list[dict[str, Any]] = field(default_factory=list)  # 断言规则
     max_response_time_ms: int = 3000
     tags: list[str] = field(default_factory=list)
-    group_name: str = ""
-    dependencies: list[str] = field(default_factory=list)
     is_enabled: bool = True
+    is_ai_generated: bool = False  # 是否AI生成
+    source_task_id: str = ""  # 来源任务ID（如果是AI生成的）
     created_at: datetime | None = None
     updated_at: datetime | None = None
     id: int | None = None
@@ -159,17 +179,26 @@ class TestCaseRecord:
         result['body'] = json.dumps(self.body, ensure_ascii=False) if self.body else None
         result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
         result['expected_response'] = json.dumps(self.expected_response, ensure_ascii=False) if self.expected_response else '{}'
+        result['assertions'] = json.dumps(self.assertions, ensure_ascii=False) if self.assertions else '[]'
         result['tags'] = json.dumps(self.tags, ensure_ascii=False) if self.tags else '[]'
-        result['dependencies'] = json.dumps(self.dependencies, ensure_ascii=False) if self.dependencies else '[]'
         return result
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
+        # 处理必填字段的默认值（兼容旧数据）
+        if not data.get('endpoint_id'):
+            data['endpoint_id'] = ''  # 旧数据可能没有 endpoint_id
         # 枚举字段转换
         if 'category' in data and isinstance(data['category'], str):
-            data['category'] = TestCaseCategory(data['category'])
+            try:
+                data['category'] = TestCaseCategory(data['category'])
+            except ValueError:
+                data['category'] = TestCaseCategory.NORMAL
         if 'priority' in data and isinstance(data['priority'], str):
-            data['priority'] = TestCasePriority(data['priority'])
+            try:
+                data['priority'] = TestCasePriority(data['priority'])
+            except ValueError:
+                data['priority'] = TestCasePriority.MEDIUM
         # JSON字段反序列化
         if 'headers' in data and isinstance(data['headers'], str):
             data['headers'] = json.loads(data['headers']) if data['headers'] else {}
@@ -179,17 +208,16 @@ class TestCaseRecord:
             data['query_params'] = json.loads(data['query_params']) if data['query_params'] else {}
         if 'expected_response' in data and isinstance(data['expected_response'], str):
             data['expected_response'] = json.loads(data['expected_response']) if data['expected_response'] else {}
+        if 'assertions' in data and isinstance(data['assertions'], str):
+            data['assertions'] = json.loads(data['assertions']) if data['assertions'] else []
         if 'tags' in data and isinstance(data['tags'], str):
             data['tags'] = json.loads(data['tags']) if data['tags'] else []
-        if 'dependencies' in data and isinstance(data['dependencies'], str):
-            data['dependencies'] = json.loads(data['dependencies']) if data['dependencies'] else []
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass
 class TestResultRecord:
-    """测试结果记录模型"""
-    task_id: str
+    """测试结果记录模型（单个测试用例的执行结果）"""
     case_id: str
     execution_id: str
     status: TestResultStatus
@@ -198,7 +226,7 @@ class TestResultRecord:
     actual_response_body: str = ""
     actual_headers: dict[str, str] = field(default_factory=dict)
     error_message: str = ""
-    validation_results: list[dict[str, Any]] = field(default_factory=list)
+    assertion_results: list[dict[str, Any]] = field(default_factory=list)
     executed_at: datetime | None = None
     created_at: datetime | None = None
     id: int | None = None
@@ -207,7 +235,7 @@ class TestResultRecord:
         result = asdict(self)
         result['status'] = self.status.value if isinstance(self.status, TestResultStatus) else self.status
         result['actual_headers'] = json.dumps(self.actual_headers, ensure_ascii=False) if self.actual_headers else '{}'
-        result['validation_results'] = json.dumps(self.validation_results, ensure_ascii=False) if self.validation_results else '[]'
+        result['assertion_results'] = json.dumps(self.assertion_results, ensure_ascii=False) if self.assertion_results else '[]'
         return result
     
     @classmethod
@@ -216,8 +244,57 @@ class TestResultRecord:
             data['status'] = TestResultStatus(data['status'])
         if 'actual_headers' in data and isinstance(data['actual_headers'], str):
             data['actual_headers'] = json.loads(data['actual_headers']) if data['actual_headers'] else {}
-        if 'validation_results' in data and isinstance(data['validation_results'], str):
-            data['validation_results'] = json.loads(data['validation_results']) if data['validation_results'] else []
+        if 'assertion_results' in data and isinstance(data['assertion_results'], str):
+            data['assertion_results'] = json.loads(data['assertion_results']) if data['assertion_results'] else []
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class TestExecution:
+    """测试执行批次模型
+    
+    记录一次测试执行的整体信息，可以包含多个测试用例的执行。
+    """
+    execution_id: str
+    name: str = ""
+    description: str = ""
+    trigger_type: TriggerType = TriggerType.MANUAL
+    status: ExecutionStatus = ExecutionStatus.PENDING
+    base_url: str = ""
+    environment: str = ""
+    variables: dict[str, Any] = field(default_factory=dict)  # 全局变量
+    headers: dict[str, str] = field(default_factory=dict)  # 全局请求头
+    total_cases: int = 0
+    passed_cases: int = 0
+    failed_cases: int = 0
+    error_cases: int = 0
+    skipped_cases: int = 0
+    duration_ms: int = 0
+    error_message: str = ""
+    scheduled_task_id: str = ""  # 关联的定时任务ID（如果是定时触发）
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+    id: int | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        result = asdict(self)
+        result['trigger_type'] = self.trigger_type.value if isinstance(self.trigger_type, TriggerType) else self.trigger_type
+        result['status'] = self.status.value if isinstance(self.status, ExecutionStatus) else self.status
+        result['variables'] = json.dumps(self.variables, ensure_ascii=False) if self.variables else '{}'
+        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
+        return result
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        if 'trigger_type' in data and isinstance(data['trigger_type'], str):
+            data['trigger_type'] = TriggerType(data['trigger_type'])
+        if 'status' in data and isinstance(data['status'], str):
+            data['status'] = ExecutionStatus(data['status'])
+        if 'variables' in data and isinstance(data['variables'], str):
+            data['variables'] = json.loads(data['variables']) if data['variables'] else {}
+        if 'headers' in data and isinstance(data['headers'], str):
+            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
@@ -349,14 +426,6 @@ class StepType(Enum):
     LOOP = "loop"
     EXTRACT = "extract"
     ASSERT = "assert"
-
-
-class TriggerType(Enum):
-    """触发类型"""
-    MANUAL = "manual"
-    SCHEDULED = "scheduled"
-    PIPELINE = "pipeline"
-    API = "api"
 
 
 class ScenarioStatus(Enum):
@@ -555,34 +624,66 @@ class StepResult:
 
 @dataclass
 class ScheduledTask:
-    """定时任务模型"""
+    """定时任务模型
+    
+    支持按测试用例或接口维度执行定时测试。
+    """
     task_id: str
     name: str
-    scenario_ids: list[str]
     cron_expression: str
     description: str = ""
+    # 执行范围：可以指定测试用例ID列表或接口ID列表
+    case_ids: list[str] = field(default_factory=list)  # 要执行的测试用例ID
+    endpoint_ids: list[str] = field(default_factory=list)  # 要执行的接口ID（执行该接口下所有用例）
+    tag_names: list[str] = field(default_factory=list)  # 按标签筛选
+    # 执行配置
     base_url: str = ""
     environment: str = ""
     variables: dict[str, Any] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)  # 全局请求头
+    # 通知配置
+    notify_on_failure: bool = True
+    notify_channels: list[str] = field(default_factory=list)  # 通知渠道：email/webhook/etc
+    notify_config: dict[str, Any] = field(default_factory=dict)  # 通知配置
+    # 状态
     is_enabled: bool = True
     last_run_at: datetime | None = None
+    last_run_status: str = ""  # 上次执行状态
     next_run_at: datetime | None = None
+    run_count: int = 0  # 执行次数
+    success_count: int = 0  # 成功次数
+    failure_count: int = 0  # 失败次数
     created_at: datetime | None = None
     updated_at: datetime | None = None
     id: int | None = None
     
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
-        result['scenario_ids'] = json.dumps(self.scenario_ids, ensure_ascii=False) if self.scenario_ids else '[]'
+        result['case_ids'] = json.dumps(self.case_ids, ensure_ascii=False) if self.case_ids else '[]'
+        result['endpoint_ids'] = json.dumps(self.endpoint_ids, ensure_ascii=False) if self.endpoint_ids else '[]'
+        result['tag_names'] = json.dumps(self.tag_names, ensure_ascii=False) if self.tag_names else '[]'
         result['variables'] = json.dumps(self.variables, ensure_ascii=False) if self.variables else '{}'
+        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
+        result['notify_channels'] = json.dumps(self.notify_channels, ensure_ascii=False) if self.notify_channels else '[]'
+        result['notify_config'] = json.dumps(self.notify_config, ensure_ascii=False) if self.notify_config else '{}'
         return result
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'scenario_ids' in data and isinstance(data['scenario_ids'], str):
-            data['scenario_ids'] = json.loads(data['scenario_ids']) if data['scenario_ids'] else []
+        if 'case_ids' in data and isinstance(data['case_ids'], str):
+            data['case_ids'] = json.loads(data['case_ids']) if data['case_ids'] else []
+        if 'endpoint_ids' in data and isinstance(data['endpoint_ids'], str):
+            data['endpoint_ids'] = json.loads(data['endpoint_ids']) if data['endpoint_ids'] else []
+        if 'tag_names' in data and isinstance(data['tag_names'], str):
+            data['tag_names'] = json.loads(data['tag_names']) if data['tag_names'] else []
         if 'variables' in data and isinstance(data['variables'], str):
             data['variables'] = json.loads(data['variables']) if data['variables'] else {}
+        if 'headers' in data and isinstance(data['headers'], str):
+            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
+        if 'notify_channels' in data and isinstance(data['notify_channels'], str):
+            data['notify_channels'] = json.loads(data['notify_channels']) if data['notify_channels'] else []
+        if 'notify_config' in data and isinstance(data['notify_config'], str):
+            data['notify_config'] = json.loads(data['notify_config']) if data['notify_config'] else {}
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
@@ -604,8 +705,8 @@ class ChangeType(Enum):
 class TestCaseVersion:
     """测试用例版本模型"""
     version_id: str
-    task_id: str
     case_id: str
+    endpoint_id: str
     version_number: int
     name: str
     method: str
@@ -618,10 +719,9 @@ class TestCaseVersion:
     query_params: dict[str, str] = field(default_factory=dict)
     expected_status_code: int = 200
     expected_response: dict[str, Any] = field(default_factory=dict)
+    assertions: list[dict[str, Any]] = field(default_factory=list)
     max_response_time_ms: int = 3000
     tags: list[str] = field(default_factory=list)
-    group_name: str = ""
-    dependencies: list[str] = field(default_factory=list)
     change_type: ChangeType = ChangeType.CREATE
     change_summary: str = ""
     changed_fields: list[str] = field(default_factory=list)
@@ -639,8 +739,8 @@ class TestCaseVersion:
         result['body'] = json.dumps(self.body, ensure_ascii=False) if self.body else None
         result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
         result['expected_response'] = json.dumps(self.expected_response, ensure_ascii=False) if self.expected_response else '{}'
+        result['assertions'] = json.dumps(self.assertions, ensure_ascii=False) if self.assertions else '[]'
         result['tags'] = json.dumps(self.tags, ensure_ascii=False) if self.tags else '[]'
-        result['dependencies'] = json.dumps(self.dependencies, ensure_ascii=False) if self.dependencies else '[]'
         result['changed_fields'] = json.dumps(self.changed_fields, ensure_ascii=False) if self.changed_fields else '[]'
         return result
     
@@ -662,10 +762,10 @@ class TestCaseVersion:
             data['query_params'] = json.loads(data['query_params']) if data['query_params'] else {}
         if 'expected_response' in data and isinstance(data['expected_response'], str):
             data['expected_response'] = json.loads(data['expected_response']) if data['expected_response'] else {}
+        if 'assertions' in data and isinstance(data['assertions'], str):
+            data['assertions'] = json.loads(data['assertions']) if data['assertions'] else []
         if 'tags' in data and isinstance(data['tags'], str):
             data['tags'] = json.loads(data['tags']) if data['tags'] else []
-        if 'dependencies' in data and isinstance(data['dependencies'], str):
-            data['dependencies'] = json.loads(data['dependencies']) if data['dependencies'] else []
         if 'changed_fields' in data and isinstance(data['changed_fields'], str):
             data['changed_fields'] = json.loads(data['changed_fields']) if data['changed_fields'] else []
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
@@ -684,8 +784,8 @@ class TestCaseVersion:
         """从测试用例创建版本"""
         return cls(
             version_id=version_id,
-            task_id=test_case.task_id,
             case_id=test_case.case_id,
+            endpoint_id=test_case.endpoint_id,
             version_number=version_number,
             name=test_case.name,
             description=test_case.description,
@@ -698,10 +798,9 @@ class TestCaseVersion:
             query_params=test_case.query_params,
             expected_status_code=test_case.expected_status_code,
             expected_response=test_case.expected_response,
+            assertions=test_case.assertions,
             max_response_time_ms=test_case.max_response_time_ms,
             tags=test_case.tags,
-            group_name=test_case.group_name,
-            dependencies=test_case.dependencies,
             change_type=change_type,
             change_summary=change_summary,
             changed_fields=changed_fields or [],
@@ -712,8 +811,8 @@ class TestCaseVersion:
 @dataclass
 class TestCaseChangeLog:
     """测试用例变更日志模型"""
-    task_id: str
     case_id: str
+    endpoint_id: str
     version_id: str
     change_type: ChangeType
     change_summary: str = ""

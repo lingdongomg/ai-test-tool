@@ -187,13 +187,13 @@ class LogParser:
             self.logger.warn("未配置LLM Chain，使用规则解析（准确性较低）")
             return self._rule_parse(lines)
 
-    def _ai_parse(self, lines: list[str], batch_num: int = 0) -> list[ParsedRequest]:
+    def _ai_parse(self, lines: list[str], _batch_num: int = 0) -> list[ParsedRequest]:
         """
         使用AI解析日志
 
         Args:
             lines: 日志行列表
-            batch_num: 批次编号
+            _batch_num: 批次编号（保留参数）
 
         Returns:
             解析后的请求列表

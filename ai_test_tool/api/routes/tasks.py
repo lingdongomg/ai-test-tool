@@ -103,6 +103,11 @@ class GenerateTestCasesRequest(BaseModel):
 _running_tasks: dict[str, dict[str, Any]] = {}
 
 
+def is_task_cancelled(task_id: str) -> bool:
+    """检查任务是否已取消"""
+    return _running_tasks.get(task_id, {}).get("cancelled", False)
+
+
 def _get_task_repo() -> TaskRepository:
     """获取任务仓库"""
     return TaskRepository(get_db_manager())
@@ -610,55 +615,75 @@ async def _run_analysis_task(
     try:
         repo.update_status(task_id, TaskStatus.RUNNING)
         
-        # 创建 AITestTool 实例
-        config = AppConfig(
-            test=TestConfig(
-                base_url=base_url or "http://localhost:8080",
-                concurrent_requests=concurrent
-            )
+        # 在线程池中执行 CPU 密集型任务，避免阻塞事件循环
+        import asyncio
+        await asyncio.to_thread(
+            _run_analysis_sync,
+            task_id, file_path, max_lines, test_strategy,
+            run_tests, base_url, concurrent
         )
-        
-        tool = AITestTool(config=config, verbose=False)
-        tool.task_id = task_id  # 使用已创建的任务ID
-        
-        try:
-            # 检查是否取消
-            if _running_tasks.get(task_id, {}).get("cancelled"):
-                return
-            
-            # 解析日志
-            tool.parse_log_file(file_path, max_lines)
-            
-            if _running_tasks.get(task_id, {}).get("cancelled"):
-                return
-            
-            # 分析请求
-            tool.analyze_requests()
-            
-            if _running_tasks.get(task_id, {}).get("cancelled"):
-                return
-            
-            # 生成测试用例
-            tool.generate_test_cases(test_strategy)
-            
-            # 执行测试
-            if run_tests and base_url:
-                if _running_tasks.get(task_id, {}).get("cancelled"):
-                    return
-                tool.run_tests(base_url, concurrent)
-                tool.validate_results()
-            
-            # 导出结果
-            tool.export_all()
-            
-            repo.update_status(task_id, TaskStatus.COMPLETED)
-        finally:
-            tool.close()
             
     except Exception as e:
         repo.update_status(task_id, TaskStatus.FAILED, str(e))
     finally:
         _running_tasks.pop(task_id, None)
+
+
+def _run_analysis_sync(
+    task_id: str,
+    file_path: str,
+    max_lines: int | None,
+    test_strategy: str,
+    run_tests: bool,
+    base_url: str | None,
+    concurrent: int
+) -> None:
+    """同步执行分析任务（在线程池中运行）"""
+    from ...core import TaskCancelledException
+    
+    repo = _get_task_repo()
+    
+    # 创建取消检查函数
+    def check_cancelled() -> bool:
+        return is_task_cancelled(task_id)
+    
+    # 创建 AITestTool 实例，传入取消检查函数
+    config = AppConfig(
+        test=TestConfig(
+            base_url=base_url or "http://localhost:8080",
+            concurrent_requests=concurrent
+        )
+    )
+    
+    tool = AITestTool(config=config, verbose=False, cancel_check_fn=check_cancelled)
+    tool.task_id = task_id  # 使用已创建的任务ID
+    
+    try:
+        # 解析日志
+        tool.parse_log_file(file_path, max_lines)
+        
+        # 分析请求
+        tool.analyze_requests()
+        
+        # 生成测试用例
+        tool.generate_test_cases(test_strategy)
+        
+        # 执行测试
+        if run_tests and base_url:
+            tool.run_tests(base_url, concurrent)
+            tool.validate_results()
+        
+        # 导出结果
+        tool.export_all()
+        
+        repo.update_status(task_id, TaskStatus.COMPLETED)
+    except TaskCancelledException:
+        repo.update_status(task_id, TaskStatus.FAILED, "任务已被用户取消")
+    except Exception as e:
+        repo.update_status(task_id, TaskStatus.FAILED, str(e))
+        raise
+    finally:
+        tool.close()
 
 
 async def _execute_analysis(
@@ -670,7 +695,25 @@ async def _execute_analysis(
     base_url: str | None,
     concurrent: int
 ) -> dict[str, Any]:
-    """同步执行分析"""
+    """同步执行分析（在线程池中运行）"""
+    import asyncio
+    return await asyncio.to_thread(
+        _execute_analysis_sync,
+        file_path, name, max_lines, test_strategy,
+        run_tests, base_url, concurrent
+    )
+
+
+def _execute_analysis_sync(
+    file_path: str,
+    name: str,
+    max_lines: int | None,
+    test_strategy: str,
+    run_tests: bool,
+    base_url: str | None,
+    concurrent: int
+) -> dict[str, Any]:
+    """同步执行分析（实际执行）"""
     config = AppConfig(
         test=TestConfig(
             base_url=base_url or "http://localhost:8080",

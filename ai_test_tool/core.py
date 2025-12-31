@@ -6,7 +6,7 @@ Python 3.13+ 兼容
 
 import os
 import uuid
-from typing import Any
+from typing import Any, Callable
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
@@ -34,6 +34,11 @@ from .database import (
 )
 
 
+class TaskCancelledException(Exception):
+    """任务被取消异常"""
+    pass
+
+
 class AITestTool:
     """
     AI测试工具主类
@@ -51,7 +56,8 @@ class AITestTool:
         self,
         config: AppConfig | None = None,
         verbose: bool = False,
-        log_dir: str | None = None
+        log_dir: str | None = None,
+        cancel_check_fn: Callable[[], bool] | None = None
     ) -> None:
         """
         初始化AI测试工具
@@ -60,14 +66,16 @@ class AITestTool:
             config: 应用配置，如果为None则使用默认配置
             verbose: 是否显示详细的AI处理日志
             log_dir: 日志文件目录，默认为项目根目录下的 logs 目录
+            cancel_check_fn: 取消检查函数，返回True表示任务已取消
         """
         self.config = config or get_config()
         set_config(self.config)
         
         self.verbose = verbose
+        self._cancel_check_fn = cancel_check_fn
         
         # 初始化日志器
-        self.logger = AILogger(verbose=verbose, name="AITestTool", log_dir=log_dir)
+        self.logger = AILogger(verbose=verbose, name="ai_analysis", log_dir=log_dir)
         set_logger(self.logger)
         
         # 初始化各模块
@@ -86,6 +94,12 @@ class AITestTool:
         # 任务相关
         self.task_id: str | None = None
         self.execution_id: str | None = None
+    
+    def _check_cancelled(self) -> None:
+        """检查任务是否已取消，如果取消则抛出异常"""
+        if self._cancel_check_fn and self._cancel_check_fn():
+            self.logger.warn("任务已被取消")
+            raise TaskCancelledException("任务已被用户取消")
     
     def _init_modules(self) -> None:
         """初始化各功能模块"""
@@ -144,6 +158,8 @@ class AITestTool:
         Returns:
             解析后的请求列表
         """
+        self._check_cancelled()  # 检查是否取消
+        
         self.logger.section("AI测试工具 - 日志解析", "🚀")
         
         if not os.path.exists(log_file):
@@ -189,6 +205,7 @@ class AITestTool:
                 chunk_size=self.config.parser.chunk_size,
                 max_lines=max_lines
             ):
+                self._check_cancelled()  # 每个chunk后检查是否取消
                 self.parsed_requests.extend(requests)
                 chunk_size = min(self.config.parser.chunk_size, total_lines - processed)
                 pbar.update(chunk_size)
@@ -216,6 +233,8 @@ class AITestTool:
         Returns:
             分析结果
         """
+        self._check_cancelled()  # 检查是否取消
+        
         if not self.parsed_requests:
             raise ValueError("请先解析日志文件")
         
@@ -224,6 +243,8 @@ class AITestTool:
         self.logger.start_step("请求分析")
         self.analysis_result = self.analyzer.analyze_requests(self.parsed_requests)
         self.logger.end_step()
+        
+        self._check_cancelled()  # 检查是否取消
         
         stats = self.analysis_result.get("statistics", {})
         self.logger.info("分析完成:")
@@ -284,6 +305,8 @@ class AITestTool:
         Returns:
             报告内容
         """
+        self._check_cancelled()  # 检查是否取消
+        
         if not self.analysis_result:
             self.analyze_requests()
         
@@ -323,6 +346,8 @@ class AITestTool:
         Returns:
             测试用例列表
         """
+        self._check_cancelled()  # 检查是否取消
+        
         if not self.parsed_requests:
             raise ValueError("请先解析日志文件")
         
@@ -335,6 +360,8 @@ class AITestTool:
             test_strategy=test_strategy
         )
         self.logger.end_step(f"生成 {len(self.test_cases)} 个用例")
+        
+        self._check_cancelled()  # 检查是否取消
         
         self.logger.success(f"生成完成: {len(self.test_cases)} 个测试用例")
         

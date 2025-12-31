@@ -8,6 +8,7 @@ Python 3.13+ 兼容
 import os
 import sys
 import time
+import logging
 from typing import Any, TextIO
 from datetime import datetime
 from enum import Enum
@@ -34,7 +35,7 @@ class AILogger:
     def __init__(
         self,
         verbose: bool = False,
-        name: str = "AITestTool",
+        name: str = "ai_analysis",
         log_dir: str | None = None,
         enable_file_log: bool = True
     ) -> None:
@@ -42,8 +43,8 @@ class AILogger:
         初始化日志器
         
         Args:
-            verbose: 是否显示详细日志
-            name: 日志器名称（项目名）
+            verbose: 是否显示详细日志（DEBUG级别）
+            name: 日志器名称
             log_dir: 日志目录，默认为项目根目录下的 logs 目录
             enable_file_log: 是否启用文件日志
         """
@@ -55,6 +56,7 @@ class AILogger:
         self._current_step: str = ""
         self._log_file: TextIO | None = None
         self._log_file_path: str | None = None
+        self._std_logger: logging.Logger | None = None
         
         # 统计信息
         self.stats: dict[str, Any] = {
@@ -79,9 +81,9 @@ class AILogger:
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)
         
-        # 生成日志文件名: 项目名_日期.log
+        # 使用与API日志相同的文件名格式，便于统一查看
         date_str = datetime.now().strftime("%Y%m%d")
-        log_filename = f"{self.name}_{date_str}.log"
+        log_filename = f"ai_analysis_{date_str}.log"
         self._log_file_path = str(log_path / log_filename)
         
         try:
@@ -89,6 +91,21 @@ class AILogger:
         except Exception as e:
             print(f"警告: 无法创建日志文件 {self._log_file_path}: {e}")
             self._log_file = None
+        
+        # 同时创建标准logging的logger，用于与其他模块集成
+        self._std_logger = logging.getLogger(f"ai_test_tool.{self.name}")
+        self._std_logger.setLevel(logging.DEBUG)
+        
+        # 如果没有handler，添加文件handler
+        if not self._std_logger.handlers:
+            file_handler = logging.FileHandler(self._log_file_path, encoding='utf-8')
+            file_handler.setLevel(logging.DEBUG)
+            formatter = logging.Formatter(
+                '[%(asctime)s] [%(levelname)s] %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(formatter)
+            self._std_logger.addHandler(file_handler)
     
     def _format_time(self) -> str:
         """格式化当前时间"""
@@ -144,18 +161,16 @@ class AILogger:
         timestamp = self._format_time()
         elapsed = self._get_elapsed()
         
-        # 只有verbose模式才显示DEBUG级别
+        # 始终写入文件（包括DEBUG级别）
+        self._write_to_file(level, message)
+        
+        # 只有verbose模式才在控制台显示DEBUG级别
         if level == LogLevel.DEBUG and not self.verbose:
-            # 但仍然写入文件
-            self._write_to_file(level, message)
             return
         
         # 输出到控制台
         print(f"{color}[{timestamp}] [{elapsed}] {icon} {message}{reset}", **kwargs)
         sys.stdout.flush()
-        
-        # 输出到文件
-        self._write_to_file(level, message)
     
     def start_session(self, description: str = "") -> None:
         """开始一个会话"""
@@ -221,14 +236,14 @@ class AILogger:
         self._current_step = operation
         self._print(LogLevel.AI, f"[AI] {operation} - 处理中...")
         
-        if self.verbose and input_preview:
-            preview = input_preview[:200] + "..." if len(input_preview) > 200 else input_preview
-            self._print(LogLevel.DEBUG, f"   输入: {preview}")
+        # 详细输入始终记录到DEBUG日志（会写入文件）
+        if input_preview:
+            preview = input_preview[:500] + "..." if len(input_preview) > 500 else input_preview
+            self._print(LogLevel.DEBUG, f"   AI输入: {preview}")
     
     def ai_progress(self, message: str) -> None:
         """AI处理进度"""
-        if self.verbose:
-            self._print(LogLevel.AI, f"   → {message}")
+        self._print(LogLevel.DEBUG, f"   → {message}")
     
     def ai_end(self, result_preview: str = "", tokens_in: int = 0, tokens_out: int = 0) -> None:
         """
@@ -248,9 +263,10 @@ class AILogger:
         
         self._print(LogLevel.AI, f"[AI] {self._current_step} - 完成 ({elapsed:.0f}ms)")
         
-        if self.verbose and result_preview:
-            preview = result_preview[:300] + "..." if len(result_preview) > 300 else result_preview
-            self._print(LogLevel.DEBUG, f"   输出: {preview}")
+        # 详细输出始终记录到DEBUG日志（会写入文件）
+        if result_preview:
+            preview = result_preview[:500] + "..." if len(result_preview) > 500 else result_preview
+            self._print(LogLevel.DEBUG, f"   AI输出: {preview}")
         
         self._step_start = None
     

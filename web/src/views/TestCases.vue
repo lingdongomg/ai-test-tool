@@ -1,31 +1,72 @@
 <template>
   <div class="test-cases-page">
-    <t-card :bordered="false">
+    <!-- 统计卡片 -->
+    <t-row :gutter="16" class="stat-cards">
+      <t-col :span="3">
+        <t-card :bordered="false" class="stat-card">
+          <div class="stat-value">{{ statistics.cases?.total || 0 }}</div>
+          <div class="stat-label">总用例数</div>
+        </t-card>
+      </t-col>
+      <t-col :span="3">
+        <t-card :bordered="false" class="stat-card">
+          <div class="stat-value text-success">{{ statistics.cases?.enabled || 0 }}</div>
+          <div class="stat-label">已启用</div>
+        </t-card>
+      </t-col>
+      <t-col :span="3">
+        <t-card :bordered="false" class="stat-card">
+          <div class="stat-value text-primary">{{ statistics.cases?.ai_generated || 0 }}</div>
+          <div class="stat-label">AI生成</div>
+        </t-card>
+      </t-col>
+      <t-col :span="3">
+        <t-card :bordered="false" class="stat-card">
+          <div class="stat-value text-warning">{{ statistics.recent_executions?.total_executions || 0 }}</div>
+          <div class="stat-label">近7天执行</div>
+        </t-card>
+      </t-col>
+    </t-row>
+
+    <!-- 主内容区 -->
+    <t-card :bordered="false" class="main-card">
+      <!-- 工具栏 -->
       <div class="toolbar">
         <t-space>
-          <t-input v-model="searchKeyword" placeholder="搜索测试用例" clearable style="width: 250px">
+          <t-input v-model="searchKeyword" placeholder="搜索用例名称/URL" clearable style="width: 250px" @enter="loadTestCases">
             <template #prefix-icon><SearchIcon /></template>
           </t-input>
-          <t-select v-model="filterVersion" placeholder="版本筛选" clearable style="width: 150px">
-            <t-option v-for="v in versions" :key="v.id" :value="v.id" :label="v.name" />
+          <t-select v-model="filterEndpoint" placeholder="按接口筛选" clearable filterable style="width: 200px" @change="loadTestCases">
+            <t-option v-for="ep in endpoints" :key="ep.endpoint_id" :value="ep.endpoint_id" :label="`${ep.method} ${ep.path}`" />
           </t-select>
-          <t-select v-model="filterCategory" placeholder="分类筛选" clearable style="width: 150px">
+          <t-select v-model="filterCategory" placeholder="按类别筛选" clearable style="width: 120px" @change="loadTestCases">
             <t-option value="normal" label="正常用例" />
             <t-option value="boundary" label="边界用例" />
             <t-option value="exception" label="异常用例" />
             <t-option value="security" label="安全用例" />
           </t-select>
-          <t-button theme="primary" @click="handleCreateVersion">
+          <t-select v-model="filterPriority" placeholder="按优先级" clearable style="width: 120px" @change="loadTestCases">
+            <t-option value="high" label="高" />
+            <t-option value="medium" label="中" />
+            <t-option value="low" label="低" />
+          </t-select>
+        </t-space>
+        <t-space>
+          <t-button theme="primary" @click="handleCreate">
             <template #icon><AddIcon /></template>
-            新建版本
+            新建用例
+          </t-button>
+          <t-button theme="success" :disabled="selectedKeys.length === 0" @click="handleExecuteSelected">
+            <template #icon><PlayCircleIcon /></template>
+            执行选中
           </t-button>
           <t-button @click="loadTestCases">
             <template #icon><RefreshIcon /></template>
-            刷新
           </t-button>
         </t-space>
       </div>
 
+      <!-- 用例列表 -->
       <t-table
         :data="testCases"
         :columns="columns"
@@ -36,8 +77,11 @@
         :selected-row-keys="selectedKeys"
         @select-change="handleSelectChange"
       >
+        <template #endpoint_name="{ row }">
+          <t-tag size="small" variant="light">{{ row.endpoint_name || '未关联' }}</t-tag>
+        </template>
         <template #priority="{ row }">
-          <t-tag :theme="getPriorityTheme(row.priority)" size="small">{{ row.priority }}</t-tag>
+          <t-tag :theme="getPriorityTheme(row.priority)" size="small">{{ getPriorityText(row.priority) }}</t-tag>
         </template>
         <template #category="{ row }">
           <t-tag size="small" variant="light">{{ getCategoryText(row.category) }}</t-tag>
@@ -45,14 +89,20 @@
         <template #method="{ row }">
           <t-tag :theme="getMethodTheme(row.method)" size="small">{{ row.method }}</t-tag>
         </template>
-        <template #version="{ row }">
-          <t-tag size="small">v{{ row.version || 1 }}</t-tag>
+        <template #is_enabled="{ row }">
+          <t-switch v-model="row.is_enabled" size="small" @change="handleToggle(row)" />
+        </template>
+        <template #last_status="{ row }">
+          <t-tag v-if="row.last_status" :theme="getStatusTheme(row.last_status)" size="small">
+            {{ getStatusText(row.last_status) }}
+          </t-tag>
+          <span v-else class="text-placeholder">未执行</span>
         </template>
         <template #op="{ row }">
-          <t-space>
+          <t-space size="small">
             <t-link theme="primary" @click="handleView(row)">查看</t-link>
             <t-link theme="primary" @click="handleEdit(row)">编辑</t-link>
-            <t-link theme="primary" @click="handleViewHistory(row)">历史</t-link>
+            <t-link theme="success" @click="handleExecuteSingle(row)">执行</t-link>
             <t-popconfirm content="确定删除该用例吗？" @confirm="handleDelete(row)">
               <t-link theme="danger">删除</t-link>
             </t-popconfirm>
@@ -60,134 +110,187 @@
         </template>
       </t-table>
 
+      <!-- 批量操作栏 -->
       <div class="batch-actions" v-if="selectedKeys.length > 0">
         <t-space>
           <span>已选择 {{ selectedKeys.length }} 项</span>
-          <t-button size="small" @click="handleBatchEnable(true)">批量启用</t-button>
-          <t-button size="small" @click="handleBatchEnable(false)">批量禁用</t-button>
-          <t-button size="small" @click="handleBatchCopy">复制到新版本</t-button>
+          <t-button size="small" @click="handleBatchToggle(true)">批量启用</t-button>
+          <t-button size="small" @click="handleBatchToggle(false)">批量禁用</t-button>
+          <t-button size="small" theme="danger" @click="handleBatchDelete">批量删除</t-button>
         </t-space>
       </div>
     </t-card>
 
-    <!-- 用例详情抽屉 -->
-    <t-drawer v-model:visible="drawerVisible" header="用例详情" size="600px">
+    <!-- 用例详情/编辑抽屉 -->
+    <t-drawer v-model:visible="drawerVisible" :header="isEditing ? '编辑用例' : '用例详情'" size="700px" :footer="isEditing">
       <template v-if="currentCase">
-        <t-descriptions :column="1">
-          <t-descriptions-item label="用例ID">{{ currentCase.case_id }}</t-descriptions-item>
-          <t-descriptions-item label="名称">{{ currentCase.name }}</t-descriptions-item>
-          <t-descriptions-item label="描述">{{ currentCase.description || '-' }}</t-descriptions-item>
-          <t-descriptions-item label="分类">{{ getCategoryText(currentCase.category) }}</t-descriptions-item>
-          <t-descriptions-item label="优先级">
-            <t-tag :theme="getPriorityTheme(currentCase.priority)">{{ currentCase.priority }}</t-tag>
-          </t-descriptions-item>
-          <t-descriptions-item label="版本">v{{ currentCase.version || 1 }}</t-descriptions-item>
-          <t-descriptions-item label="请求方法">
-            <t-tag :theme="getMethodTheme(currentCase.method)">{{ currentCase.method }}</t-tag>
-          </t-descriptions-item>
-          <t-descriptions-item label="请求URL">{{ currentCase.url }}</t-descriptions-item>
-          <t-descriptions-item label="期望状态码">{{ currentCase.expected_status_code }}</t-descriptions-item>
-        </t-descriptions>
+        <t-form v-if="isEditing" ref="formRef" :data="editForm" :rules="formRules" label-width="100px">
+          <t-form-item label="关联接口" name="endpoint_id">
+            <t-select v-model="editForm.endpoint_id" filterable placeholder="选择关联接口">
+              <t-option v-for="ep in endpoints" :key="ep.endpoint_id" :value="ep.endpoint_id" :label="`${ep.method} ${ep.path}`" />
+            </t-select>
+          </t-form-item>
+          <t-form-item label="用例名称" name="name">
+            <t-input v-model="editForm.name" placeholder="请输入用例名称" />
+          </t-form-item>
+          <t-form-item label="描述" name="description">
+            <t-textarea v-model="editForm.description" placeholder="请输入用例描述" :autosize="{ minRows: 2 }" />
+          </t-form-item>
+          <t-row :gutter="16">
+            <t-col :span="6">
+              <t-form-item label="类别" name="category">
+                <t-select v-model="editForm.category">
+                  <t-option value="normal" label="正常用例" />
+                  <t-option value="boundary" label="边界用例" />
+                  <t-option value="exception" label="异常用例" />
+                  <t-option value="security" label="安全用例" />
+                </t-select>
+              </t-form-item>
+            </t-col>
+            <t-col :span="6">
+              <t-form-item label="优先级" name="priority">
+                <t-select v-model="editForm.priority">
+                  <t-option value="high" label="高" />
+                  <t-option value="medium" label="中" />
+                  <t-option value="low" label="低" />
+                </t-select>
+              </t-form-item>
+            </t-col>
+          </t-row>
+          <t-row :gutter="16">
+            <t-col :span="4">
+              <t-form-item label="HTTP方法" name="method">
+                <t-select v-model="editForm.method">
+                  <t-option value="GET" label="GET" />
+                  <t-option value="POST" label="POST" />
+                  <t-option value="PUT" label="PUT" />
+                  <t-option value="DELETE" label="DELETE" />
+                  <t-option value="PATCH" label="PATCH" />
+                </t-select>
+              </t-form-item>
+            </t-col>
+            <t-col :span="8">
+              <t-form-item label="URL" name="url">
+                <t-input v-model="editForm.url" placeholder="/api/xxx" />
+              </t-form-item>
+            </t-col>
+          </t-row>
+          <t-form-item label="请求头">
+            <t-textarea v-model="editForm.headers_str" placeholder='{"Content-Type": "application/json"}' :autosize="{ minRows: 2 }" />
+          </t-form-item>
+          <t-form-item label="查询参数">
+            <t-textarea v-model="editForm.query_params_str" placeholder='{"page": "1", "size": "10"}' :autosize="{ minRows: 2 }" />
+          </t-form-item>
+          <t-form-item label="请求体">
+            <t-textarea v-model="editForm.body_str" placeholder='{"key": "value"}' :autosize="{ minRows: 3 }" />
+          </t-form-item>
+          <t-row :gutter="16">
+            <t-col :span="6">
+              <t-form-item label="期望状态码" name="expected_status_code">
+                <t-input-number v-model="editForm.expected_status_code" :min="100" :max="599" />
+              </t-form-item>
+            </t-col>
+            <t-col :span="6">
+              <t-form-item label="最大响应时间" name="max_response_time_ms">
+                <t-input-number v-model="editForm.max_response_time_ms" :min="100" suffix="ms" />
+              </t-form-item>
+            </t-col>
+          </t-row>
+          <t-form-item label="期望响应">
+            <t-textarea v-model="editForm.expected_response_str" placeholder='{"code": 0, "message": "success"}' :autosize="{ minRows: 3 }" />
+          </t-form-item>
+          <t-form-item label="标签">
+            <t-tag-input v-model="editForm.tags" placeholder="输入后回车添加标签" />
+          </t-form-item>
+        </t-form>
 
-        <t-divider>请求头</t-divider>
-        <pre class="json-view">{{ formatJson(currentCase.headers) }}</pre>
+        <!-- 查看模式 -->
+        <template v-else>
+          <t-descriptions :column="2">
+            <t-descriptions-item label="用例ID">{{ currentCase.case_id }}</t-descriptions-item>
+            <t-descriptions-item label="关联接口">{{ currentCase.endpoint_id || '-' }}</t-descriptions-item>
+            <t-descriptions-item label="名称" :span="2">{{ currentCase.name }}</t-descriptions-item>
+            <t-descriptions-item label="描述" :span="2">{{ currentCase.description || '-' }}</t-descriptions-item>
+            <t-descriptions-item label="类别">
+              <t-tag size="small">{{ getCategoryText(currentCase.category) }}</t-tag>
+            </t-descriptions-item>
+            <t-descriptions-item label="优先级">
+              <t-tag :theme="getPriorityTheme(currentCase.priority)" size="small">{{ getPriorityText(currentCase.priority) }}</t-tag>
+            </t-descriptions-item>
+            <t-descriptions-item label="HTTP方法">
+              <t-tag :theme="getMethodTheme(currentCase.method)" size="small">{{ currentCase.method }}</t-tag>
+            </t-descriptions-item>
+            <t-descriptions-item label="期望状态码">{{ currentCase.expected_status_code }}</t-descriptions-item>
+            <t-descriptions-item label="URL" :span="2">{{ currentCase.url }}</t-descriptions-item>
+            <t-descriptions-item label="最大响应时间">{{ currentCase.max_response_time_ms }}ms</t-descriptions-item>
+            <t-descriptions-item label="是否启用">
+              <t-tag :theme="currentCase.is_enabled ? 'success' : 'default'" size="small">
+                {{ currentCase.is_enabled ? '已启用' : '已禁用' }}
+              </t-tag>
+            </t-descriptions-item>
+          </t-descriptions>
 
-        <t-divider>请求体</t-divider>
-        <pre class="json-view">{{ formatJson(currentCase.body) }}</pre>
+          <t-divider>请求头</t-divider>
+          <pre class="json-view">{{ formatJson(currentCase.headers) }}</pre>
 
-        <t-divider>期望响应</t-divider>
-        <pre class="json-view">{{ formatJson(currentCase.expected_response) }}</pre>
+          <t-divider>查询参数</t-divider>
+          <pre class="json-view">{{ formatJson(currentCase.query_params) }}</pre>
+
+          <t-divider>请求体</t-divider>
+          <pre class="json-view">{{ formatJson(currentCase.body) }}</pre>
+
+          <t-divider>期望响应</t-divider>
+          <pre class="json-view">{{ formatJson(currentCase.expected_response) }}</pre>
+
+          <t-divider>断言规则</t-divider>
+          <pre class="json-view">{{ formatJson(currentCase.assertions) }}</pre>
+
+          <t-divider>最近执行记录</t-divider>
+          <t-table :data="currentCase.recent_results || []" :columns="resultColumns" size="small" />
+        </template>
+      </template>
+
+      <template #footer v-if="isEditing">
+        <t-button @click="drawerVisible = false">取消</t-button>
+        <t-button theme="primary" @click="handleSave">保存</t-button>
       </template>
     </t-drawer>
 
-    <!-- 版本历史对话框 -->
-    <t-dialog v-model:visible="historyDialogVisible" header="版本历史" width="700px">
-      <t-timeline>
-        <t-timeline-item
-          v-for="history in versionHistory"
-          :key="history.version_number"
-          :label="`v${history.version_number}`"
-        >
-          <div class="history-item">
-            <div class="history-header">
-              <span>
-                <t-tag size="small" :theme="history.change_type === 'create' ? 'success' : history.change_type === 'restore' ? 'warning' : 'primary'">
-                  {{ getChangeTypeText(history.change_type) }}
-                </t-tag>
-                {{ history.created_at?.replace('T', ' ').slice(0, 19) || '-' }}
-              </span>
-              <t-space>
-                <t-link theme="primary" @click="handleCompareVersion(history)">对比</t-link>
-                <t-link theme="primary" @click="handleRollback(history)">回滚</t-link>
-              </t-space>
-            </div>
-            <div class="history-desc">{{ history.change_summary || '无变更说明' }}</div>
-            <div class="history-fields" v-if="history.changed_fields?.length">
-              变更字段: {{ history.changed_fields.join(', ') }}
-            </div>
-            <div class="history-user" v-if="history.changed_by">
-              操作人: {{ history.changed_by }}
-            </div>
-          </div>
-        </t-timeline-item>
-      </t-timeline>
-    </t-dialog>
-
-    <!-- 版本对比对话框 -->
-    <t-dialog v-model:visible="compareDialogVisible" header="版本对比" width="800px">
-      <template v-if="compareResult">
-        <div class="compare-header">
-          <span>版本 v{{ compareResult.version1 }}</span>
-          <span>→</span>
-          <span>版本 v{{ compareResult.version2 }}</span>
-        </div>
-        <t-alert v-if="!compareResult.has_changes" theme="success" message="两个版本完全相同" />
-        <div v-else class="compare-list">
-          <div v-for="diff in compareResult.differences" :key="diff.field" class="compare-item">
-            <div class="compare-field">{{ diff.field }}</div>
-            <div class="compare-values">
-              <div class="compare-old">
-                <div class="label">旧值:</div>
-                <pre>{{ formatJson(diff.version1_value) }}</pre>
-              </div>
-              <div class="compare-new">
-                <div class="label">新值:</div>
-                <pre>{{ formatJson(diff.version2_value) }}</pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
-    </t-dialog>
-
-    <!-- 新建版本对话框 -->
-    <t-dialog v-model:visible="versionDialogVisible" header="新建版本" @confirm="handleConfirmVersion">
-      <t-form :data="versionForm">
-        <t-form-item label="版本名称">
-          <t-input v-model="versionForm.name" placeholder="如：v2.0.0" />
+    <!-- 执行对话框 -->
+    <t-dialog v-model:visible="executeDialogVisible" header="执行测试" width="500px" @confirm="handleConfirmExecute">
+      <t-form :data="executeForm" label-width="100px">
+        <t-form-item label="测试目标URL" required>
+          <t-input v-model="executeForm.base_url" placeholder="http://localhost:8080" />
         </t-form-item>
-        <t-form-item label="版本说明">
-          <t-textarea v-model="versionForm.description" placeholder="版本变更说明" />
-        </t-form-item>
-        <t-form-item label="基于版本">
-          <t-select v-model="versionForm.baseVersion" placeholder="选择基础版本">
-            <t-option v-for="v in versions" :key="v.id" :value="v.id" :label="v.name" />
+        <t-form-item label="环境">
+          <t-select v-model="executeForm.environment" placeholder="选择环境" clearable>
+            <t-option value="dev" label="开发环境" />
+            <t-option value="test" label="测试环境" />
+            <t-option value="prod" label="生产环境" />
           </t-select>
         </t-form-item>
+        <t-form-item label="全局请求头">
+          <t-textarea v-model="executeForm.headers_str" placeholder='{"Authorization": "Bearer xxx"}' :autosize="{ minRows: 2 }" />
+        </t-form-item>
+        <t-form-item label="全局变量">
+          <t-textarea v-model="executeForm.variables_str" placeholder='{"userId": "123"}' :autosize="{ minRows: 2 }" />
+        </t-form-item>
       </t-form>
+      <t-alert theme="info" :message="`将执行 ${executeForm.case_ids.length} 个测试用例`" />
     </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { SearchIcon, AddIcon, RefreshIcon } from 'tdesign-icons-vue-next'
-import api from '../api'
+import { SearchIcon, AddIcon, RefreshIcon, PlayCircleIcon } from 'tdesign-icons-vue-next'
+import { testCaseApi, endpointApi } from '../api'
 
 interface TestCase {
   case_id: string
-  task_id: string
+  endpoint_id: string
+  endpoint_name?: string
   name: string
   description: string
   category: string
@@ -196,55 +299,39 @@ interface TestCase {
   url: string
   headers: any
   body: any
+  query_params: any
   expected_status_code: number
   expected_response: any
-  version: number
+  assertions: any[]
+  max_response_time_ms: number
+  tags: string[]
   is_enabled: boolean
+  is_ai_generated: boolean
+  execution_count?: number
+  last_status?: string
+  recent_results?: any[]
 }
 
-interface VersionInfo {
-  version_id: string
-  version_number: number
+interface Endpoint {
+  endpoint_id: string
   name: string
-  change_type: string
-  change_summary: string
-  changed_fields: string[]
-  changed_by: string
-  created_at: string
+  method: string
+  path: string
 }
 
 const loading = ref(false)
 const testCases = ref<TestCase[]>([])
+const endpoints = ref<Endpoint[]>([])
+const statistics = ref<any>({})
 const searchKeyword = ref('')
-const filterVersion = ref<number | null>(null)
+const filterEndpoint = ref('')
 const filterCategory = ref('')
+const filterPriority = ref('')
 const selectedKeys = ref<string[]>([])
 const drawerVisible = ref(false)
-const historyDialogVisible = ref(false)
-const versionDialogVisible = ref(false)
-const compareDialogVisible = ref(false)
+const executeDialogVisible = ref(false)
+const isEditing = ref(false)
 const currentCase = ref<TestCase | null>(null)
-const versionHistory = ref<VersionInfo[]>([])
-const compareResult = ref<any>(null)
-
-const currentTaskId = ref('') // 当前任务ID，需要从路由或其他地方获取
-
-const versions = ref([
-  { id: 1, name: 'v1.0.0' },
-  { id: 2, name: 'v1.1.0' },
-  { id: 3, name: 'v2.0.0' }
-])
-
-const versionForm = ref({
-  name: '',
-  description: '',
-  baseVersion: null as number | null
-})
-
-const rollbackForm = ref({
-  version_number: 0,
-  reason: ''
-})
 
 const pagination = ref({
   current: 1,
@@ -252,52 +339,89 @@ const pagination = ref({
   total: 0
 })
 
+const editForm = reactive({
+  endpoint_id: '',
+  name: '',
+  description: '',
+  category: 'normal',
+  priority: 'medium',
+  method: 'GET',
+  url: '',
+  headers_str: '{}',
+  body_str: '',
+  query_params_str: '{}',
+  expected_status_code: 200,
+  expected_response_str: '{}',
+  max_response_time_ms: 3000,
+  tags: [] as string[]
+})
+
+const formRules = {
+  endpoint_id: [{ required: true, message: '请选择关联接口' }],
+  name: [{ required: true, message: '请输入用例名称' }],
+  method: [{ required: true, message: '请选择HTTP方法' }],
+  url: [{ required: true, message: '请输入URL' }]
+}
+
+const executeForm = reactive({
+  case_ids: [] as string[],
+  endpoint_ids: [] as string[],
+  base_url: '',
+  environment: '',
+  headers_str: '{}',
+  variables_str: '{}'
+})
+
 const columns = [
   { colKey: 'row-select', type: 'multiple', width: 50 },
-  { colKey: 'case_id', title: '用例ID', width: 150, ellipsis: true },
-  { colKey: 'name', title: '名称', ellipsis: true },
-  { colKey: 'category', title: '分类', cell: 'category', width: 100 },
-  { colKey: 'priority', title: '优先级', cell: 'priority', width: 80 },
+  { colKey: 'name', title: '用例名称', ellipsis: true, minWidth: 200 },
   { colKey: 'method', title: '方法', cell: 'method', width: 80 },
-  { colKey: 'url', title: 'URL', width: 200, ellipsis: true },
-  { colKey: 'version', title: '版本', cell: 'version', width: 80 },
-  { colKey: 'op', title: '操作', cell: 'op', width: 180 }
+  { colKey: 'url', title: 'URL', ellipsis: true, width: 200 },
+  { colKey: 'category', title: '类别', cell: 'category', width: 100 },
+  { colKey: 'priority', title: '优先级', cell: 'priority', width: 80 },
+  { colKey: 'is_enabled', title: '启用', cell: 'is_enabled', width: 80 },
+  { colKey: 'execution_count', title: '执行次数', width: 80 },
+  { colKey: 'last_status', title: '最近状态', cell: 'last_status', width: 100 },
+  { colKey: 'op', title: '操作', cell: 'op', width: 180, fixed: 'right' }
+]
+
+const resultColumns = [
+  { colKey: 'executed_at', title: '执行时间', width: 160 },
+  { colKey: 'status', title: '状态', width: 80 },
+  { colKey: 'actual_status_code', title: '状态码', width: 80 },
+  { colKey: 'actual_response_time_ms', title: '响应时间', width: 100 }
 ]
 
 const getPriorityTheme = (priority: string) => {
-  const map: Record<string, string> = {
-    high: 'danger',
-    medium: 'warning',
-    low: 'default'
-  }
+  const map: Record<string, string> = { high: 'danger', medium: 'warning', low: 'default' }
   return map[priority] || 'default'
+}
+
+const getPriorityText = (priority: string) => {
+  const map: Record<string, string> = { high: '高', medium: '中', low: '低' }
+  return map[priority] || priority
 }
 
 const getCategoryText = (category: string) => {
   const map: Record<string, string> = {
-    normal: '正常用例',
-    boundary: '边界用例',
-    exception: '异常用例',
-    security: '安全用例'
+    normal: '正常用例', boundary: '边界用例', exception: '异常用例', security: '安全用例', performance: '性能用例'
   }
   return map[category] || category
 }
 
 const getMethodTheme = (method: string) => {
-  const map: Record<string, string> = {
-    GET: 'success', POST: 'primary', PUT: 'warning', DELETE: 'danger'
-  }
+  const map: Record<string, string> = { GET: 'success', POST: 'primary', PUT: 'warning', DELETE: 'danger', PATCH: 'default' }
   return map[method] || 'default'
 }
 
-const getChangeTypeText = (type: string) => {
-  const map: Record<string, string> = {
-    create: '创建',
-    update: '更新',
-    delete: '删除',
-    restore: '回滚'
-  }
-  return map[type] || type
+const getStatusTheme = (status: string) => {
+  const map: Record<string, string> = { passed: 'success', failed: 'danger', error: 'warning', skipped: 'default' }
+  return map[status] || 'default'
+}
+
+const getStatusText = (status: string) => {
+  const map: Record<string, string> = { passed: '通过', failed: '失败', error: '错误', skipped: '跳过' }
+  return map[status] || status
 }
 
 const formatJson = (obj: any) => {
@@ -314,19 +438,45 @@ const formatJson = (obj: any) => {
 
 const loadTestCases = async () => {
   loading.value = true
-  // 模拟数据，实际应从API获取
-  testCases.value = [
-    { case_id: 'TC001', task_id: 'task_001', name: '用户登录-正常', description: '测试正常登录流程', category: 'normal', priority: 'high', method: 'POST', url: '/api/login', headers: {}, body: { username: 'test', password: '123456' }, expected_status_code: 200, expected_response: { code: 0 }, version: 2, is_enabled: true },
-    { case_id: 'TC002', task_id: 'task_001', name: '用户登录-密码错误', description: '测试密码错误情况', category: 'exception', priority: 'medium', method: 'POST', url: '/api/login', headers: {}, body: { username: 'test', password: 'wrong' }, expected_status_code: 401, expected_response: { code: -1 }, version: 2, is_enabled: true },
-    { case_id: 'TC003', task_id: 'task_001', name: '获取用户信息', description: '测试获取用户信息接口', category: 'normal', priority: 'high', method: 'GET', url: '/api/user/info', headers: { Authorization: 'Bearer token' }, body: null, expected_status_code: 200, expected_response: { code: 0 }, version: 1, is_enabled: true }
-  ]
-  currentTaskId.value = 'task_001'
-  pagination.value.total = testCases.value.length
-  loading.value = false
+  try {
+    const res: any = await testCaseApi.list({
+      endpoint_id: filterEndpoint.value || undefined,
+      category: filterCategory.value || undefined,
+      priority: filterPriority.value || undefined,
+      search: searchKeyword.value || undefined,
+      page: pagination.value.current,
+      page_size: pagination.value.pageSize
+    })
+    testCases.value = res.items || []
+    pagination.value.total = res.total || 0
+  } catch (error) {
+    console.error('加载测试用例失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadEndpoints = async () => {
+  try {
+    const res: any = await endpointApi.list({ size: 1000 })
+    endpoints.value = res.items || []
+  } catch (error) {
+    console.error('加载接口列表失败:', error)
+  }
+}
+
+const loadStatistics = async () => {
+  try {
+    const res: any = await testCaseApi.statistics()
+    statistics.value = res
+  } catch (error) {
+    console.error('加载统计信息失败:', error)
+  }
 }
 
 const handlePageChange = (pageInfo: any) => {
   pagination.value.current = pageInfo.current
+  pagination.value.pageSize = pageInfo.pageSize
   loadTestCases()
 }
 
@@ -334,121 +484,215 @@ const handleSelectChange = (keys: string[]) => {
   selectedKeys.value = keys
 }
 
-const handleView = (row: TestCase) => {
-  currentCase.value = row
+const handleView = async (row: TestCase) => {
+  isEditing.value = false
+  try {
+    const res: any = await testCaseApi.get(row.case_id)
+    currentCase.value = res
+  } catch {
+    currentCase.value = row
+  }
   drawerVisible.value = true
 }
 
 const handleEdit = (row: TestCase) => {
-  MessagePlugin.info('编辑功能开发中')
+  isEditing.value = true
+  currentCase.value = row
+  Object.assign(editForm, {
+    endpoint_id: row.endpoint_id,
+    name: row.name,
+    description: row.description || '',
+    category: row.category,
+    priority: row.priority,
+    method: row.method,
+    url: row.url,
+    headers_str: JSON.stringify(row.headers || {}, null, 2),
+    body_str: row.body ? JSON.stringify(row.body, null, 2) : '',
+    query_params_str: JSON.stringify(row.query_params || {}, null, 2),
+    expected_status_code: row.expected_status_code,
+    expected_response_str: JSON.stringify(row.expected_response || {}, null, 2),
+    max_response_time_ms: row.max_response_time_ms,
+    tags: row.tags || []
+  })
+  drawerVisible.value = true
 }
 
-const handleViewHistory = async (row: TestCase) => {
-  currentCase.value = row
+const handleCreate = () => {
+  isEditing.value = true
+  currentCase.value = null
+  Object.assign(editForm, {
+    endpoint_id: '',
+    name: '',
+    description: '',
+    category: 'normal',
+    priority: 'medium',
+    method: 'GET',
+    url: '',
+    headers_str: '{}',
+    body_str: '',
+    query_params_str: '{}',
+    expected_status_code: 200,
+    expected_response_str: '{}',
+    max_response_time_ms: 3000,
+    tags: []
+  })
+  drawerVisible.value = true
+}
+
+const handleSave = async () => {
   try {
-    const res = await api.get(`/api/v1/versions/${row.task_id}/cases/${row.case_id}/versions`)
-    versionHistory.value = res.data.versions || []
-  } catch (error) {
-    // 使用模拟数据
-    versionHistory.value = [
-      { version_id: 'v_001', version_number: 2, name: row.name, change_type: 'update', change_summary: '更新了请求参数', changed_fields: ['body', 'headers'], changed_by: 'admin', created_at: '2025-01-15T10:30:00' },
-      { version_id: 'v_000', version_number: 1, name: row.name, change_type: 'create', change_summary: '初始版本', changed_fields: [], changed_by: 'system', created_at: '2025-01-10T15:20:00' }
-    ]
+    const data = {
+      endpoint_id: editForm.endpoint_id,
+      name: editForm.name,
+      description: editForm.description,
+      category: editForm.category,
+      priority: editForm.priority,
+      method: editForm.method,
+      url: editForm.url,
+      headers: JSON.parse(editForm.headers_str || '{}'),
+      body: editForm.body_str ? JSON.parse(editForm.body_str) : null,
+      query_params: JSON.parse(editForm.query_params_str || '{}'),
+      expected_status_code: editForm.expected_status_code,
+      expected_response: JSON.parse(editForm.expected_response_str || '{}'),
+      max_response_time_ms: editForm.max_response_time_ms,
+      tags: editForm.tags
+    }
+
+    if (currentCase.value) {
+      await testCaseApi.update(currentCase.value.case_id, data)
+      MessagePlugin.success('更新成功')
+    } else {
+      await testCaseApi.create(data)
+      MessagePlugin.success('创建成功')
+    }
+    drawerVisible.value = false
+    loadTestCases()
+    loadStatistics()
+  } catch (error: any) {
+    MessagePlugin.error(error.message || '保存失败')
   }
-  historyDialogVisible.value = true
 }
 
 const handleDelete = async (row: TestCase) => {
-  MessagePlugin.success('删除成功')
+  try {
+    await testCaseApi.delete(row.case_id)
+    MessagePlugin.success('删除成功')
+    loadTestCases()
+    loadStatistics()
+  } catch (error) {
+    MessagePlugin.error('删除失败')
+  }
+}
+
+const handleToggle = async (row: TestCase) => {
+  try {
+    await testCaseApi.toggle(row.case_id)
+  } catch (error) {
+    row.is_enabled = !row.is_enabled
+    MessagePlugin.error('操作失败')
+  }
+}
+
+const handleBatchToggle = async (enabled: boolean) => {
+  for (const caseId of selectedKeys.value) {
+    const tc = testCases.value.find(t => t.case_id === caseId)
+    if (tc && tc.is_enabled !== enabled) {
+      await testCaseApi.toggle(caseId)
+    }
+  }
+  MessagePlugin.success(enabled ? '批量启用成功' : '批量禁用成功')
+  selectedKeys.value = []
   loadTestCases()
 }
 
-const handleBatchEnable = (enabled: boolean) => {
-  MessagePlugin.success(enabled ? '批量启用成功' : '批量禁用成功')
+const handleBatchDelete = async () => {
+  for (const caseId of selectedKeys.value) {
+    await testCaseApi.delete(caseId)
+  }
+  MessagePlugin.success('批量删除成功')
   selectedKeys.value = []
+  loadTestCases()
+  loadStatistics()
 }
 
-const handleBatchCopy = () => {
-  MessagePlugin.info('复制到新版本功能开发中')
+const handleExecuteSingle = (row: TestCase) => {
+  executeForm.case_ids = [row.case_id]
+  executeForm.endpoint_ids = []
+  executeDialogVisible.value = true
 }
 
-const handleCreateVersion = () => {
-  versionForm.value = { name: '', description: '', baseVersion: null }
-  versionDialogVisible.value = true
+const handleExecuteSelected = () => {
+  executeForm.case_ids = [...selectedKeys.value]
+  executeForm.endpoint_ids = []
+  executeDialogVisible.value = true
 }
 
-const handleConfirmVersion = () => {
-  MessagePlugin.success('版本创建成功')
-  versionDialogVisible.value = false
-}
-
-const handleCompareVersion = async (history: VersionInfo) => {
-  if (!currentCase.value) return
-  
-  const latestVersion = versionHistory.value[0]?.version_number || 1
-  if (history.version_number === latestVersion) {
-    MessagePlugin.warning('当前已是最新版本')
+const handleConfirmExecute = async () => {
+  if (!executeForm.base_url) {
+    MessagePlugin.warning('请输入测试目标URL')
     return
   }
-  
+
   try {
-    const res = await api.get(`/api/v1/versions/${currentCase.value.task_id}/cases/${currentCase.value.case_id}/versions/compare`, {
-      params: { v1: history.version_number, v2: latestVersion }
+    const res: any = await testCaseApi.execute({
+      case_ids: executeForm.case_ids,
+      endpoint_ids: executeForm.endpoint_ids,
+      base_url: executeForm.base_url,
+      environment: executeForm.environment,
+      headers: JSON.parse(executeForm.headers_str || '{}'),
+      variables: JSON.parse(executeForm.variables_str || '{}')
     })
-    compareResult.value = res.data
-    compareDialogVisible.value = true
-  } catch (error) {
-    // 模拟数据
-    compareResult.value = {
-      version1: history.version_number,
-      version2: latestVersion,
-      has_changes: true,
-      differences: [
-        { field: 'body', version1_value: { username: 'old' }, version2_value: { username: 'test' } },
-        { field: 'headers', version1_value: {}, version2_value: { 'Content-Type': 'application/json' } }
-      ]
-    }
-    compareDialogVisible.value = true
+    MessagePlugin.success(`测试执行已启动，执行ID: ${res.execution_id}`)
+    executeDialogVisible.value = false
+    selectedKeys.value = []
+  } catch (error: any) {
+    MessagePlugin.error(error.message || '执行失败')
   }
 }
 
-const handleRollback = async (history: VersionInfo) => {
-  if (!currentCase.value) return
-  
-  rollbackForm.value = {
-    version_number: history.version_number,
-    reason: ''
-  }
-  
-  const confirmed = await MessagePlugin.confirm({
-    header: '确认回滚',
-    body: `确定要回滚到版本 v${history.version_number} 吗？`,
-    confirmBtn: '确认回滚',
-    cancelBtn: '取消'
-  })
-  
-  if (confirmed) {
-    try {
-      await api.post(`/api/v1/versions/${currentCase.value.task_id}/cases/${currentCase.value.case_id}/restore`, {
-        version_number: history.version_number,
-        reason: '用户手动回滚'
-      })
-      MessagePlugin.success(`已回滚到版本 v${history.version_number}`)
-      historyDialogVisible.value = false
-      loadTestCases()
-    } catch (error) {
-      MessagePlugin.success(`已回滚到版本 v${history.version_number}`)
-      historyDialogVisible.value = false
-    }
-  }
-}
-
-onMounted(loadTestCases)
+onMounted(() => {
+  loadTestCases()
+  loadEndpoints()
+  loadStatistics()
+})
 </script>
 
 <style scoped>
-.toolbar {
+.stat-cards {
   margin-bottom: 16px;
+}
+
+.stat-card {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.45);
+  margin-top: 4px;
+}
+
+.text-success { color: #00a870; }
+.text-primary { color: #0052d9; }
+.text-warning { color: #ed7b2f; }
+
+.main-card {
+  min-height: calc(100vh - 200px);
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .batch-actions {
@@ -465,93 +709,10 @@ onMounted(loadTestCases)
   font-size: 12px;
   overflow: auto;
   max-height: 200px;
-}
-
-.history-item {
-  padding: 8px 0;
-}
-
-.history-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.history-desc {
-  color: rgba(0, 0, 0, 0.6);
-  font-size: 13px;
-  margin-top: 4px;
-}
-
-.history-fields {
-  color: rgba(0, 0, 0, 0.45);
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.history-user {
-  color: rgba(0, 0, 0, 0.45);
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-.compare-header {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-  font-size: 16px;
-  font-weight: 500;
-}
-
-.compare-list {
-  max-height: 500px;
-  overflow-y: auto;
-}
-
-.compare-item {
-  border: 1px solid #e7e7e7;
-  border-radius: 4px;
-  margin-bottom: 12px;
-  overflow: hidden;
-}
-
-.compare-field {
-  background: #f5f7fa;
-  padding: 8px 12px;
-  font-weight: 500;
-  border-bottom: 1px solid #e7e7e7;
-}
-
-.compare-values {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-
-.compare-old, .compare-new {
-  padding: 8px 12px;
-}
-
-.compare-old {
-  background: #fff1f0;
-  border-right: 1px solid #e7e7e7;
-}
-
-.compare-new {
-  background: #f6ffed;
-}
-
-.compare-values .label {
-  font-size: 12px;
-  color: rgba(0, 0, 0, 0.45);
-  margin-bottom: 4px;
-}
-
-.compare-values pre {
   margin: 0;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
+}
+
+.text-placeholder {
+  color: rgba(0, 0, 0, 0.25);
 }
 </style>

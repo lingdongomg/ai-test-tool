@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 自动加载 .env 文件
 from dotenv import load_dotenv
@@ -49,8 +48,12 @@ class LLMConfig(BaseModel):
         description="生成温度"
     )
     max_tokens: int = Field(
-        default=4096,
-        description="最大生成token数"
+        default=8192,
+        description="最大生成token数（建议8192以上，避免输出截断）"
+    )
+    debug: bool = Field(
+        default=False,
+        description="是否开启LangChain调试模式"
     )
     
     @classmethod
@@ -62,7 +65,8 @@ class LLMConfig(BaseModel):
             api_key=os.getenv("LLM_API_KEY"),
             api_base=os.getenv("LLM_API_BASE"),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096"))
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "8192")),
+            debug=os.getenv("LLM_DEBUG", "false").lower() in ("true", "1", "yes")
         )
 
 

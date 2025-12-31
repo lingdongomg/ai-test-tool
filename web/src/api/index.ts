@@ -1,4 +1,5 @@
-import axios from 'axios'
+import axios, { AxiosResponse, AxiosError } from 'axios'
+import { MessagePlugin } from 'tdesign-vue-next'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -10,9 +11,11 @@ const api = axios.create({
 
 // 响应拦截器
 api.interceptors.response.use(
-  response => response.data,
-  error => {
+  (response: AxiosResponse) => response.data,
+  (error: AxiosError<{ detail?: string }>) => {
     console.error('API Error:', error)
+    const message = error.response?.data?.detail || error.message || '请求失败'
+    MessagePlugin.error(message)
     return Promise.reject(error)
   }
 )
@@ -50,10 +53,21 @@ export const importApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
-  importJson: (data: { content: any; doc_type: string; source_name?: string }) => 
-    api.post('/imports/json', data),
-  preview: (data: { content: any; doc_type: string }) => 
-    api.post('/imports/preview', data)
+  importJson: (data: { content: any; doc_type: string; source_name?: string; update_strategy?: string }) => 
+    api.post('/imports/json', {
+      data: data.content,
+      doc_type: data.doc_type,
+      source_name: data.source_name || 'manual_import',
+      update_strategy: data.update_strategy || 'merge'
+    }),
+  preview: (file: File, docType: string) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('doc_type', docType)
+    return api.post('/imports/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
 }
 
 // 测试场景
@@ -151,6 +165,85 @@ export const taskApi = {
   
   // 删除任务
   delete: (taskId: string) => api.delete(`/tasks/${taskId}`)
+}
+
+// 测试用例管理
+export const testCaseApi = {
+  // 获取测试用例列表
+  list: (params?: { 
+    endpoint_id?: string; 
+    category?: string; 
+    priority?: string;
+    is_enabled?: boolean;
+    tag?: string;
+    search?: string;
+    page?: number; 
+    page_size?: number 
+  }) => api.get('/test-cases', { params }),
+  
+  // 按接口获取测试用例
+  getByEndpoint: (endpointId: string, enabledOnly?: boolean) => 
+    api.get(`/test-cases/by-endpoint/${endpointId}`, { params: { enabled_only: enabledOnly } }),
+  
+  // 获取单个测试用例
+  get: (caseId: string) => api.get(`/test-cases/${caseId}`),
+  
+  // 创建测试用例
+  create: (data: {
+    endpoint_id: string;
+    name: string;
+    description?: string;
+    category?: string;
+    priority?: string;
+    method: string;
+    url: string;
+    headers?: Record<string, string>;
+    body?: any;
+    query_params?: Record<string, string>;
+    expected_status_code?: number;
+    expected_response?: any;
+    assertions?: any[];
+    max_response_time_ms?: number;
+    tags?: string[];
+  }) => api.post('/test-cases', data),
+  
+  // 更新测试用例
+  update: (caseId: string, data: any) => api.put(`/test-cases/${caseId}`, data),
+  
+  // 删除测试用例
+  delete: (caseId: string) => api.delete(`/test-cases/${caseId}`),
+  
+  // 切换启用状态
+  toggle: (caseId: string) => api.post(`/test-cases/${caseId}/toggle`),
+  
+  // 执行测试
+  execute: (data: {
+    case_ids?: string[];
+    endpoint_ids?: string[];
+    base_url: string;
+    environment?: string;
+    variables?: Record<string, any>;
+    headers?: Record<string, string>;
+  }) => api.post('/test-cases/execute', data),
+  
+  // 获取执行记录列表
+  listExecutions: (params?: { page?: number; page_size?: number }) => 
+    api.get('/test-cases/executions', { params }),
+  
+  // 获取执行详情
+  getExecution: (executionId: string) => api.get(`/test-cases/executions/${executionId}`),
+  
+  // 获取统计信息
+  statistics: () => api.get('/test-cases/statistics'),
+  
+  // 获取接口摘要
+  endpointSummary: () => api.get('/test-cases/endpoint-summary'),
+  
+  // 定时任务
+  listScheduledTasks: () => api.get('/test-cases/scheduled-tasks'),
+  createScheduledTask: (data: any) => api.post('/test-cases/scheduled-tasks', data),
+  deleteScheduledTask: (taskId: string) => api.delete(`/test-cases/scheduled-tasks/${taskId}`),
+  toggleScheduledTask: (taskId: string) => api.post(`/test-cases/scheduled-tasks/${taskId}/toggle`)
 }
 
 export default api

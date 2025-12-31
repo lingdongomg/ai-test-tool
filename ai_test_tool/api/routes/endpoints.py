@@ -42,17 +42,17 @@ class EndpointResponse(BaseModel):
     id: int
     endpoint_id: str
     name: str
-    description: str
+    description: str | None = None
     method: str
     path: str
-    summary: str
-    parameters: list[dict[str, Any]]
-    request_body: dict[str, Any]
-    responses: dict[str, Any]
+    summary: str | None = None
+    parameters: list[dict[str, Any]] | None = None
+    request_body: dict[str, Any] | None = None
+    responses: dict[str, Any] | None = None
     source_type: str
-    source_file: str
+    source_file: str | None = None
     is_deprecated: bool
-    tags: list[str]
+    tags: list[str] = []
     
     class Config:
         from_attributes = True

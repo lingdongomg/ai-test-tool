@@ -12,6 +12,25 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from ..config import LLMConfig, get_config
 
 
+def _setup_langchain_debug(debug: bool) -> None:
+    """设置LangChain调试模式"""
+    try:
+        from langchain.globals import set_debug, set_verbose
+        set_debug(debug)
+        set_verbose(debug)
+        if debug:
+            import logging
+            logging.getLogger("langchain").setLevel(logging.DEBUG)
+    except ImportError:
+        # 旧版本LangChain兼容
+        try:
+            import langchain
+            langchain.debug = debug
+            langchain.verbose = debug
+        except Exception:
+            pass
+
+
 class LLMProvider(ABC):
     """LLM提供商抽象基类"""
     
@@ -38,6 +57,8 @@ class OllamaProvider(LLMProvider):
         self.config = config
         self._llm: Any = None
         self._chat_model: Any = None
+        # 设置LangChain调试模式
+        _setup_langchain_debug(config.debug)
     
     def get_llm(self) -> Any:
         """获取Ollama LLM实例"""
@@ -101,6 +122,8 @@ class OpenAIProvider(LLMProvider):
         self.config = config
         self._llm: Any = None
         self._chat_model: Any = None
+        # 设置LangChain调试模式
+        _setup_langchain_debug(config.debug)
     
     def get_llm(self) -> Any:
         """获取OpenAI LLM实例"""
@@ -165,6 +188,8 @@ class AnthropicProvider(LLMProvider):
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
         self._chat_model: Any = None
+        # 设置LangChain调试模式
+        _setup_langchain_debug(config.debug)
     
     def get_llm(self) -> Any:
         """Claude主要使用Chat接口"""

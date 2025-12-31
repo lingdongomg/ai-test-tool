@@ -9,6 +9,7 @@
         :value="activeMenu"
         theme="dark"
         @change="handleMenuChange"
+        class="menu-transparent"
       >
         <t-menu-item value="dashboard">
           <template #icon><DashboardIcon /></template>
@@ -81,14 +82,24 @@ const currentTitle = computed(() => {
 })
 
 const handleMenuChange = (value: string) => {
-  router.push({ name: value.charAt(0).toUpperCase() + value.slice(1) })
+  // 处理特殊路由名称映射
+  const routeNameMap: Record<string, string> = {
+    'test-cases': 'TestCases',
+    'testcases': 'TestCases'
+  }
+  const routeName = routeNameMap[value] || value.charAt(0).toUpperCase() + value.slice(1)
+  router.push({ name: routeName })
 }
 </script>
 
 <style scoped>
 .sidebar {
-  background: linear-gradient(180deg, #001529 0%, #002140 100%);
+  background: #242424;
   min-height: 100vh;
+}
+
+.menu-transparent {
+  background: transparent !important;
 }
 
 .logo {
@@ -96,6 +107,9 @@ const handleMenuChange = (value: string) => {
   align-items: center;
   padding: 16px 24px;
   color: #fff;
+  background: #242424; /* 确保与侧边栏背景一致 */
+  height: 64px; /* 与 header 高度对齐 */
+  box-sizing: border-box;
 }
 
 .logo-icon {
@@ -107,6 +121,7 @@ const handleMenuChange = (value: string) => {
   margin-left: 12px;
   font-size: 18px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .header {
@@ -128,5 +143,6 @@ const handleMenuChange = (value: string) => {
   padding: 20px;
   background: #f5f7fa;
   min-height: calc(100vh - 64px);
+  overflow-y: auto;
 }
 </style>
