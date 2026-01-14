@@ -4,13 +4,14 @@ FastAPI 后台服务模块
 """
 
 from .app import create_app
-from .routes import tags, endpoints, scenarios, executions, imports
+from .routes import dashboard, development, monitoring, insights, ai_assistant, imports
 
 __all__ = [
     "create_app",
-    "tags",
-    "endpoints",
-    "scenarios",
-    "executions",
+    "dashboard",
+    "development",
+    "monitoring",
+    "insights",
+    "ai_assistant",
     "imports"
 ]

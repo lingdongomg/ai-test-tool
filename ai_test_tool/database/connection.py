@@ -1,6 +1,6 @@
 """
 数据库连接管理
-Python 3.13+ 兼容
+使用 DBUtils 连接池管理 MySQL 连接，解决长时间操作导致连接超时问题
 """
 
 import os
@@ -10,11 +10,12 @@ from collections.abc import Generator
 
 import pymysql
 from pymysql.cursors import DictCursor
+from dbutils.pooled_db import PooledDB
 
 
 class DatabaseConfig:
     """数据库配置"""
-    
+
     def __init__(
         self,
         host: str | None = None,
@@ -22,7 +23,14 @@ class DatabaseConfig:
         user: str | None = None,
         password: str | None = None,
         database: str | None = None,
-        charset: str = "utf8mb4"
+        charset: str = "utf8mb4",
+        # 连接池配置
+        min_cached: int = 2,  # 初始化时创建的连接数
+        max_cached: int = 5,  # 连接池最大空闲连接数
+        max_connections: int = 20,  # 连接池最大连接数
+        blocking: bool = True,  # 连接池满时是否阻塞等待
+        max_usage: int = 0,  # 单个连接最大复用次数（0表示无限制）
+        ping: int = 1,  # 检查连接是否可用（0=None, 1=default, 2=每次使用前检查）
     ) -> None:
         self.host = host or os.getenv("MYSQL_HOST", "localhost")
         self.port = port or int(os.getenv("MYSQL_PORT", "3306"))
@@ -30,7 +38,14 @@ class DatabaseConfig:
         self.password = password or os.getenv("MYSQL_PASSWORD", "")
         self.database = database or os.getenv("MYSQL_DATABASE", "ai_test_tool")
         self.charset = charset
-    
+        # 连接池配置
+        self.min_cached = min_cached
+        self.max_cached = max_cached
+        self.max_connections = max_connections
+        self.blocking = blocking
+        self.max_usage = max_usage
+        self.ping = ping
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "host": self.host,
@@ -38,46 +53,69 @@ class DatabaseConfig:
             "user": self.user,
             "password": self.password,
             "database": self.database,
-            "charset": self.charset
+            "charset": self.charset,
         }
 
 
 class DatabaseManager:
     """
-    数据库管理器
-    
-    负责数据库连接、初始化和基本操作
+    数据库管理器（使用连接池）
+
+    使用 DBUtils.PooledDB 管理连接池，解决以下问题：
+    1. 长时间操作导致的连接超时 (MySQL server has gone away)
+    2. 连接复用，减少连接创建开销
+    3. 自动检测和重建失效连接
     """
-    
+
     def __init__(self, config: DatabaseConfig | None = None) -> None:
         self.config = config or DatabaseConfig()
-        self._connection: pymysql.Connection | None = None
-    
-    def connect(self) -> pymysql.Connection:
-        """建立数据库连接"""
-        if self._connection is None or not self._connection.open:
-            self._connection = pymysql.connect(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-                database=self.config.database,
-                charset=self.config.charset,
-                cursorclass=DictCursor,
-                autocommit=False
-            )
-        return self._connection
-    
+        self._pool: PooledDB | None = None
+
+    def _create_pool(self) -> PooledDB:
+        """创建连接池"""
+        return PooledDB(
+            creator=pymysql,
+            mincached=self.config.min_cached,
+            maxcached=self.config.max_cached,
+            maxconnections=self.config.max_connections,
+            blocking=self.config.blocking,
+            maxusage=self.config.max_usage,
+            ping=self.config.ping,
+            host=self.config.host,
+            port=self.config.port,
+            user=self.config.user,
+            password=self.config.password,
+            database=self.config.database,
+            charset=self.config.charset,
+            cursorclass=DictCursor,
+            autocommit=False,
+        )
+
+    @property
+    def pool(self) -> PooledDB:
+        """获取连接池（懒加载）"""
+        if self._pool is None:
+            self._pool = self._create_pool()
+        return self._pool
+
+    def get_connection(self) -> pymysql.Connection:
+        """从连接池获取连接"""
+        return self.pool.connection()
+
     def close(self) -> None:
-        """关闭数据库连接"""
-        if self._connection and self._connection.open:
-            self._connection.close()
-            self._connection = None
-    
+        """关闭连接池"""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
+
     @contextmanager
     def get_cursor(self) -> Generator[DictCursor, None, None]:
-        """获取数据库游标（上下文管理器）"""
-        conn = self.connect()
+        """获取数据库游标（上下文管理器）
+
+        每次操作从连接池获取新连接，操作完成后自动归还。
+        这样可以避免长时间持有连接导致超时。
+        """
+        conn = self.get_connection()
         cursor = conn.cursor()
         try:
             yield cursor
@@ -87,32 +125,37 @@ class DatabaseManager:
             raise e
         finally:
             cursor.close()
-    
+            conn.close()  # 归还连接到连接池
+
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> int:
         """执行SQL语句"""
         with self.get_cursor() as cursor:
             cursor.execute(sql, params)
             return cursor.rowcount
-    
+
     def execute_many(self, sql: str, params_list: list[tuple[Any, ...]]) -> int:
         """批量执行SQL语句"""
         with self.get_cursor() as cursor:
             cursor.executemany(sql, params_list)
             return cursor.rowcount
-    
-    def fetch_one(self, sql: str, params: tuple[Any, ...] | None = None) -> dict[str, Any] | None:
+
+    def fetch_one(
+        self, sql: str, params: tuple[Any, ...] | None = None
+    ) -> dict[str, Any] | None:
         """查询单条记录"""
         with self.get_cursor() as cursor:
             cursor.execute(sql, params)
             return cursor.fetchone()
-    
-    def fetch_all(self, sql: str, params: tuple[Any, ...] | None = None) -> list[dict[str, Any]]:
+
+    def fetch_all(
+        self, sql: str, params: tuple[Any, ...] | None = None
+    ) -> list[dict[str, Any]]:
         """查询多条记录"""
         with self.get_cursor() as cursor:
             cursor.execute(sql, params)
             result = cursor.fetchall()
             return list(result) if result else []
-    
+
     def init_database(self) -> None:
         """初始化数据库（创建数据库和表）"""
         # 先连接不指定数据库
@@ -121,9 +164,9 @@ class DatabaseManager:
             port=self.config.port,
             user=self.config.user,
             password=self.config.password,
-            charset=self.config.charset
+            charset=self.config.charset,
         )
-        
+
         try:
             with temp_conn.cursor() as cursor:
                 # 创建数据库
@@ -134,18 +177,16 @@ class DatabaseManager:
             temp_conn.commit()
         finally:
             temp_conn.close()
-        
-        # 连接到数据库并创建表
-        self.connect()
+
+        # 创建表
         self._create_tables()
-    
+
     def _create_tables(self) -> None:
         """创建数据表"""
         tables_sql = get_create_tables_sql()
-        
-        with self.get_cursor() as cursor:
-            for sql in tables_sql:
-                cursor.execute(sql)
+
+        for sql in tables_sql:
+            self.execute(sql)
 
 
 def get_create_tables_sql() -> list[str]:
@@ -174,7 +215,6 @@ def get_create_tables_sql() -> list[str]:
             INDEX `idx_created_at` (`created_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分析任务表'
         """,
-        
         # 解析请求表
         """
         CREATE TABLE IF NOT EXISTS `parsed_requests` (
@@ -207,7 +247,6 @@ def get_create_tables_sql() -> list[str]:
             FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='解析请求表'
         """,
-        
         # 测试用例表
         """
         CREATE TABLE IF NOT EXISTS `test_cases` (
@@ -241,7 +280,6 @@ def get_create_tables_sql() -> list[str]:
             FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例表'
         """,
-        
         # 测试结果表
         """
         CREATE TABLE IF NOT EXISTS `test_results` (
@@ -266,7 +304,6 @@ def get_create_tables_sql() -> list[str]:
             FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试结果表'
         """,
-        
         # 分析报告表
         """
         CREATE TABLE IF NOT EXISTS `analysis_reports` (
@@ -285,7 +322,6 @@ def get_create_tables_sql() -> list[str]:
             FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分析报告表'
         """,
-        
         # 用例标签表
         """
         CREATE TABLE IF NOT EXISTS `test_case_tags` (
@@ -299,7 +335,6 @@ def get_create_tables_sql() -> list[str]:
             FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例标签表'
         """,
-        
         # 用例分组表
         """
         CREATE TABLE IF NOT EXISTS `test_case_groups` (
@@ -315,7 +350,7 @@ def get_create_tables_sql() -> list[str]:
             INDEX `idx_parent_group` (`parent_group`),
             FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例分组表'
-        """
+        """,
     ]
 
 

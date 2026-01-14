@@ -120,8 +120,8 @@ class AITestTool:
         """初始化数据库连接"""
         try:
             self.db_manager: DatabaseManager = get_db_manager()
-            # 尝试连接数据库
-            self.db_manager.connect()
+            # 测试连接池是否可用（执行简单查询验证）
+            self.db_manager.fetch_one("SELECT 1")
             
             # 初始化仓库
             self.task_repo = TaskRepository(self.db_manager)
@@ -177,21 +177,38 @@ class AITestTool:
         
         self.logger.info(f"预计处理: {total_lines:,} 行")
         
-        # 生成任务ID并创建任务记录
-        self.task_id = self._generate_task_id()
-        task = AnalysisTask(
-            task_id=self.task_id,
-            name=f"分析任务 - {Path(log_file).name}",
-            log_file_path=log_file,
-            log_file_size=file_size,
-            status=TaskStatus.RUNNING,
-            total_lines=total_lines,
-            started_at=datetime.now()
-        )
-        try:
-            self.task_repo.create(task)
-        except Exception as e:
-            self.logger.warn(f"创建任务记录失败: {e}")
+        # 如果已有任务ID（从API传入），则使用现有的；否则生成新的
+        if not self.task_id:
+            self.task_id = self._generate_task_id()
+            task = AnalysisTask(
+                task_id=self.task_id,
+                name=f"分析任务 - {Path(log_file).name}",
+                log_file_path=log_file,
+                log_file_size=file_size,
+                status=TaskStatus.RUNNING,
+                total_lines=total_lines,
+                started_at=datetime.now()
+            )
+            try:
+                self.task_repo.create(task)
+            except Exception as e:
+                self.logger.warn(f"创建任务记录失败: {e}")
+        else:
+            # 更新现有任务的信息
+            try:
+                self.task_repo.update_progress(
+                    self.task_id,
+                    processed_lines=0,
+                    total_requests=0
+                )
+                # 更新 total_lines
+                db = get_db_manager()
+                db.execute(
+                    "UPDATE analysis_tasks SET total_lines = %s, started_at = NOW() WHERE task_id = %s",
+                    (total_lines, self.task_id)
+                )
+            except Exception as e:
+                self.logger.warn(f"更新任务信息失败: {e}")
         
         self.logger.start_session(f"解析 {log_file}")
         
@@ -413,8 +430,8 @@ class AITestTool:
                 db_priority = priority_map.get(tc.priority.value, DBTestCasePriority.MEDIUM)
                 
                 record = TestCaseRecord(
-                    task_id=self.task_id,
                     case_id=tc.id,
+                    endpoint_id="",  # AI生成的用例暂无关联接口
                     name=tc.name,
                     description=tc.description or "",
                     category=db_category,
@@ -428,9 +445,9 @@ class AITestTool:
                     expected_response={},
                     max_response_time_ms=tc.expected.max_response_time_ms,
                     tags=tc.tags or [],
-                    group_name="",
-                    dependencies=tc.dependencies or [],
-                    is_enabled=True
+                    is_enabled=True,
+                    is_ai_generated=True,
+                    source_task_id=self.task_id
                 )
                 records.append(record)
             
@@ -524,7 +541,6 @@ class AITestTool:
                         executed_at = datetime.now()
                 
                 record = TestResultRecord(
-                    task_id=self.task_id,
                     case_id=result.test_case_id,
                     execution_id=self.execution_id,
                     status=db_status,
@@ -533,7 +549,7 @@ class AITestTool:
                     actual_response_body=result.actual_response_body or "",
                     actual_headers=result.actual_headers or {},
                     error_message=result.error_message or "",
-                    validation_results=result.validation_results or [],
+                    assertion_results=result.validation_results or [],
                     executed_at=executed_at
                 )
                 records.append(record)

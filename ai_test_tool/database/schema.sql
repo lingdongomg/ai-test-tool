@@ -59,10 +59,12 @@ CREATE TABLE IF NOT EXISTS `parsed_requests` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='解析请求表';
 
 -- 测试用例表（以接口为维度）
+-- 注意：通过 case_id 前缀匹配关联接口，case_id 格式为 {endpoint_id}_{hash}
+-- task_id 字段用于存储关联的 endpoint_id
 CREATE TABLE IF NOT EXISTS `test_cases` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `case_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '用例唯一ID',
-    `endpoint_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID',
+    `case_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '用例唯一ID，格式: {endpoint_id}_{hash}',
+    `task_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID（endpoint_id）',
     `name` VARCHAR(255) NOT NULL COMMENT '用例名称',
     `description` TEXT COMMENT '用例描述',
     `category` ENUM('normal', 'boundary', 'exception', 'performance', 'security') DEFAULT 'normal' COMMENT '用例类别',
@@ -74,19 +76,18 @@ CREATE TABLE IF NOT EXISTS `test_cases` (
     `query_params` JSON COMMENT '查询参数',
     `expected_status_code` INT DEFAULT 200 COMMENT '期望状态码',
     `expected_response` JSON COMMENT '期望响应',
-    `assertions` JSON COMMENT '断言规则',
     `max_response_time_ms` INT DEFAULT 3000 COMMENT '最大响应时间',
     `tags` JSON COMMENT '标签',
+    `group_name` VARCHAR(100) COMMENT '分组名称',
+    `dependencies` JSON COMMENT '依赖用例ID',
     `is_enabled` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
-    `is_ai_generated` TINYINT(1) DEFAULT 0 COMMENT '是否AI生成',
-    `source_task_id` VARCHAR(64) COMMENT '来源任务ID（AI生成时）',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX `idx_endpoint_id` (`endpoint_id`),
+    INDEX `idx_task_id` (`task_id`),
     INDEX `idx_category` (`category`),
     INDEX `idx_priority` (`priority`),
-    INDEX `idx_is_enabled` (`is_enabled`),
-    INDEX `idx_is_ai_generated` (`is_ai_generated`)
+    INDEX `idx_group_name` (`group_name`),
+    INDEX `idx_is_enabled` (`is_enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例表';
 
 -- 测试结果表（单个测试用例的执行结果）
@@ -381,11 +382,11 @@ CREATE TABLE IF NOT EXISTS `scheduled_tasks` (
 -- =====================================================
 
 -- 测试用例版本表（存储每个版本的完整快照）
+-- 注意：通过 case_id 前缀匹配关联接口
 CREATE TABLE IF NOT EXISTS `test_case_versions` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     `version_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '版本唯一ID',
-    `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
-    `endpoint_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID',
+    `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID，格式: {endpoint_id}_{hash}',
     `version_number` INT NOT NULL COMMENT '版本号（从1开始递增）',
     `name` VARCHAR(255) NOT NULL COMMENT '用例名称',
     `description` TEXT COMMENT '用例描述',
@@ -398,7 +399,6 @@ CREATE TABLE IF NOT EXISTS `test_case_versions` (
     `query_params` JSON COMMENT '查询参数',
     `expected_status_code` INT DEFAULT 200 COMMENT '期望状态码',
     `expected_response` JSON COMMENT '期望响应',
-    `assertions` JSON COMMENT '断言规则',
     `max_response_time_ms` INT DEFAULT 3000 COMMENT '最大响应时间',
     `tags` JSON COMMENT '标签',
     `change_type` ENUM('create', 'update', 'delete', 'restore') DEFAULT 'create' COMMENT '变更类型',
@@ -407,7 +407,6 @@ CREATE TABLE IF NOT EXISTS `test_case_versions` (
     `changed_by` VARCHAR(100) COMMENT '变更人',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '版本创建时间',
     INDEX `idx_case_id` (`case_id`),
-    INDEX `idx_endpoint_id` (`endpoint_id`),
     INDEX `idx_version_number` (`case_id`, `version_number`),
     INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例版本表';
@@ -415,8 +414,7 @@ CREATE TABLE IF NOT EXISTS `test_case_versions` (
 -- 测试用例变更日志表（轻量级变更记录）
 CREATE TABLE IF NOT EXISTS `test_case_change_logs` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
-    `endpoint_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID',
+    `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID，格式: {endpoint_id}_{hash}',
     `version_id` VARCHAR(64) NOT NULL COMMENT '关联版本ID',
     `change_type` ENUM('create', 'update', 'delete', 'restore', 'enable', 'disable') NOT NULL COMMENT '变更类型',
     `change_summary` VARCHAR(500) COMMENT '变更摘要',
@@ -427,8 +425,96 @@ CREATE TABLE IF NOT EXISTS `test_case_change_logs` (
     `user_agent` VARCHAR(500) COMMENT 'User-Agent',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX `idx_case_id` (`case_id`),
-    INDEX `idx_endpoint_id` (`endpoint_id`),
     INDEX `idx_version_id` (`version_id`),
     INDEX `idx_change_type` (`change_type`),
     INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例变更日志表';
+
+-- =====================================================
+-- 线上质量监控相关表
+-- =====================================================
+
+-- 线上请求监控表
+CREATE TABLE IF NOT EXISTS `production_requests` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `request_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '请求唯一ID',
+    `method` VARCHAR(10) NOT NULL COMMENT 'HTTP方法',
+    `url` VARCHAR(2048) NOT NULL COMMENT '请求URL',
+    `headers` JSON COMMENT '请求头',
+    `body` TEXT COMMENT '请求体',
+    `query_params` JSON COMMENT '查询参数',
+    `expected_status_code` INT DEFAULT 200 COMMENT '期望状态码',
+    `expected_response_pattern` VARCHAR(500) COMMENT '期望响应正则模式',
+    `source` ENUM('log_parse', 'manual', 'import') DEFAULT 'log_parse' COMMENT '来源',
+    `source_task_id` VARCHAR(64) COMMENT '来源任务ID',
+    `tags` JSON COMMENT '标签',
+    `is_enabled` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+    `last_check_at` DATETIME COMMENT '上次检查时间',
+    `last_check_status` VARCHAR(20) COMMENT '上次检查状态',
+    `consecutive_failures` INT DEFAULT 0 COMMENT '连续失败次数',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_method` (`method`),
+    INDEX `idx_is_enabled` (`is_enabled`),
+    INDEX `idx_source` (`source`),
+    INDEX `idx_last_check_status` (`last_check_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='线上请求监控表';
+
+-- 健康检查执行记录表
+CREATE TABLE IF NOT EXISTS `health_check_executions` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `execution_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '执行唯一ID',
+    `base_url` VARCHAR(512) COMMENT '目标服务器URL',
+    `total_requests` INT DEFAULT 0 COMMENT '总请求数',
+    `healthy_count` INT DEFAULT 0 COMMENT '健康数',
+    `unhealthy_count` INT DEFAULT 0 COMMENT '不健康数',
+    `status` ENUM('pending', 'running', 'completed', 'failed') DEFAULT 'pending' COMMENT '执行状态',
+    `trigger_type` ENUM('manual', 'scheduled', 'api') DEFAULT 'manual' COMMENT '触发类型',
+    `started_at` DATETIME COMMENT '开始时间',
+    `completed_at` DATETIME COMMENT '完成时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_status` (`status`),
+    INDEX `idx_trigger_type` (`trigger_type`),
+    INDEX `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='健康检查执行记录表';
+
+-- 健康检查结果表
+CREATE TABLE IF NOT EXISTS `health_check_results` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `execution_id` VARCHAR(64) NOT NULL COMMENT '关联执行ID',
+    `request_id` VARCHAR(64) NOT NULL COMMENT '关联请求ID',
+    `success` TINYINT(1) NOT NULL COMMENT '是否成功',
+    `status_code` INT COMMENT '响应状态码',
+    `response_time_ms` DECIMAL(10,2) COMMENT '响应时间(ms)',
+    `response_body` TEXT COMMENT '响应体',
+    `error_message` TEXT COMMENT '错误信息',
+    `ai_analysis` JSON COMMENT 'AI分析结果',
+    `checked_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '检查时间',
+    INDEX `idx_execution_id` (`execution_id`),
+    INDEX `idx_request_id` (`request_id`),
+    INDEX `idx_success` (`success`),
+    INDEX `idx_checked_at` (`checked_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='健康检查结果表';
+
+-- =====================================================
+-- AI 洞察表
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS `ai_insights` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `insight_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '洞察唯一ID',
+    `insight_type` VARCHAR(50) NOT NULL COMMENT '洞察类型',
+    `title` VARCHAR(255) NOT NULL COMMENT '标题',
+    `description` TEXT COMMENT '描述',
+    `severity` ENUM('high', 'medium', 'low') DEFAULT 'medium' COMMENT '严重程度',
+    `confidence` DECIMAL(3,2) DEFAULT 0.8 COMMENT '置信度',
+    `details` JSON COMMENT '详细信息',
+    `recommendations` JSON COMMENT '建议',
+    `is_resolved` TINYINT(1) DEFAULT 0 COMMENT '是否已解决',
+    `resolved_at` DATETIME COMMENT '解决时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_insight_type` (`insight_type`),
+    INDEX `idx_severity` (`severity`),
+    INDEX `idx_is_resolved` (`is_resolved`),
+    INDEX `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI洞察表';

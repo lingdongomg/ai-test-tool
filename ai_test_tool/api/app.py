@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .routes import tags, endpoints, scenarios, executions, imports, analysis, versions, tasks, test_cases
+from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks
 
 
 def setup_logging() -> logging.Logger:
@@ -63,7 +63,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Test Tool API",
         description="智能API测试工具后台服务",
-        version="1.0.0",
+        version="2.0.0",
         docs_url="/docs",
         redoc_url="/redoc"
     )
@@ -96,20 +96,25 @@ def create_app() -> FastAPI:
         logger.debug(f"响应: {request.method} {request.url.path} - {response.status_code}")
         return response
     
-    # 注册路由
-    app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["分析任务"])
-    app.include_router(tags.router, prefix="/api/v1/tags", tags=["标签管理"])
-    app.include_router(endpoints.router, prefix="/api/v1/endpoints", tags=["接口管理"])
-    app.include_router(scenarios.router, prefix="/api/v1/scenarios", tags=["测试场景"])
-    app.include_router(executions.router, prefix="/api/v1/executions", tags=["执行记录"])
-    app.include_router(imports.router, prefix="/api/v1/imports", tags=["文档导入"])
-    app.include_router(analysis.router, prefix="/api/v1", tags=["智能分析"])
-    app.include_router(versions.router, prefix="/api/v1/versions", tags=["版本管理"])
-    app.include_router(test_cases.router, tags=["测试用例管理"])
+    # ==================== API 路由 ====================
+    # 首页仪表盘
+    app.include_router(dashboard.router, prefix="/api/v2/dashboard", tags=["仪表盘"])
+    # 场景一：开发自测
+    app.include_router(development.router, prefix="/api/v2/development", tags=["开发自测"])
+    # 场景二：线上监控
+    app.include_router(monitoring.router, prefix="/api/v2/monitoring", tags=["线上监控"])
+    # 场景三：日志洞察
+    app.include_router(insights.router, prefix="/api/v2/insights", tags=["日志洞察"])
+    # AI 助手
+    app.include_router(ai_assistant.router, prefix="/api/v2/ai", tags=["AI助手"])
+    # 接口文档导入
+    app.include_router(imports.router, prefix="/api/v2/imports", tags=["文档导入"])
+    # 分析任务（日志解析相关）
+    app.include_router(tasks.router, prefix="/api/v2/tasks", tags=["分析任务"])
     
     @app.get("/", tags=["健康检查"])
     async def root():
-        return {"message": "AI Test Tool API", "version": "1.0.0"}
+        return {"message": "AI Test Tool API", "version": "2.0.0"}
     
     @app.get("/health", tags=["健康检查"])
     async def health():
