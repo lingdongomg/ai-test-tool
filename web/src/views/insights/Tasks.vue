@@ -17,10 +17,26 @@
         hover
         @page-change="handlePageChange"
       >
+        <template #name="{ row }">
+          <div class="task-name">
+            <t-tag 
+              :theme="getTypeTheme(row.name)" 
+              variant="light" 
+              size="small"
+              style="margin-right: 8px;"
+            >
+              {{ getTypeLabel(row.name) }}
+            </t-tag>
+            <span>{{ row.name }}</span>
+          </div>
+        </template>
         <template #status="{ row }">
           <t-tag :theme="getStatusTheme(row.status)">
             {{ getStatusLabel(row.status) }}
           </t-tag>
+        </template>
+        <template #total_requests="{ row }">
+          {{ row.total_requests || '-' }}
         </template>
         <template #log_file_size="{ row }">
           {{ formatFileSize(row.log_file_size) }}
@@ -28,6 +44,13 @@
         <template #op="{ row }">
           <t-space>
             <t-link theme="primary" @click="handleView(row)">详情</t-link>
+            <t-link 
+              v-if="isRequestType(row.name) && row.status === 'completed' && row.total_requests > 0" 
+              theme="primary" 
+              @click="handleExtract(row)"
+            >
+              提取监控
+            </t-link>
             <t-popconfirm content="确定删除？" @confirm="handleDelete(row)">
               <t-link theme="danger">删除</t-link>
             </t-popconfirm>
@@ -35,6 +58,32 @@
         </template>
       </t-table>
     </t-card>
+
+    <!-- 提取监控对话框 -->
+    <t-dialog
+      v-model:visible="extractDialogVisible"
+      header="提取监控用例"
+      :confirm-btn="{ content: '提取', loading: extracting }"
+      @confirm="confirmExtract"
+    >
+      <t-form :data="extractForm" label-width="120px">
+        <t-form-item label="任务ID">
+          <t-input v-model="extractForm.task_id" disabled />
+        </t-form-item>
+        <t-form-item label="最小成功率">
+          <div style="display: flex; align-items: center; width: 100%;">
+            <t-slider v-model="extractForm.min_success_rate" :min="0" :max="1" :step="0.1" style="flex: 1;" />
+            <span style="margin-left: 8px; min-width: 40px;">{{ (extractForm.min_success_rate * 100).toFixed(0) }}%</span>
+          </div>
+        </t-form-item>
+        <t-form-item label="每接口最大数">
+          <t-input-number v-model="extractForm.max_requests_per_endpoint" :min="1" :max="20" />
+        </t-form-item>
+        <t-form-item label="添加标签">
+          <t-input v-model="extractForm.tags_str" placeholder="多个标签用逗号分隔" />
+        </t-form-item>
+      </t-form>
+    </t-dialog>
   </div>
 </template>
 
@@ -43,7 +92,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { AddIcon } from 'tdesign-icons-vue-next'
-import { insightsApi } from '../../api/v2'
+import { insightsApi, monitoringApi } from '../../api/v2'
 
 const router = useRouter()
 
@@ -58,15 +107,25 @@ const pagination = reactive({
   total: 0
 })
 
+// 提取对话框
+const extractDialogVisible = ref(false)
+const extracting = ref(false)
+const extractForm = reactive({
+  task_id: '',
+  min_success_rate: 0.9,
+  max_requests_per_endpoint: 5,
+  tags_str: ''
+})
+
 // 表格列
 const columns = [
   { colKey: 'task_id', title: '任务ID', width: 100 },
   { colKey: 'name', title: '任务名称', ellipsis: true },
-  { colKey: 'log_file_path', title: '文件路径', width: 250, ellipsis: true },
+  { colKey: 'total_requests', title: '请求数', width: 80 },
   { colKey: 'log_file_size', title: '文件大小', width: 100 },
   { colKey: 'status', title: '状态', width: 100 },
   { colKey: 'created_at', title: '创建时间', width: 180 },
-  { colKey: 'op', title: '操作', width: 120 }
+  { colKey: 'op', title: '操作', width: 180 }
 ]
 
 // 加载数据
@@ -111,7 +170,47 @@ const handleDelete = async (row: any) => {
   }
 }
 
+// 提取监控
+const handleExtract = (row: any) => {
+  extractForm.task_id = row.task_id
+  extractForm.min_success_rate = 0.9
+  extractForm.max_requests_per_endpoint = 5
+  extractForm.tags_str = ''
+  extractDialogVisible.value = true
+}
+
+const confirmExtract = async () => {
+  extracting.value = true
+  try {
+    const tags = extractForm.tags_str ? extractForm.tags_str.split(',').map(t => t.trim()).filter(t => t) : undefined
+    const res = await monitoringApi.extractFromLog({
+      task_id: extractForm.task_id,
+      min_success_rate: extractForm.min_success_rate,
+      max_requests_per_endpoint: extractForm.max_requests_per_endpoint,
+      tags
+    })
+    MessagePlugin.success(res.message || '提取成功')
+    extractDialogVisible.value = false
+  } catch (error) {
+    console.error('提取失败:', error)
+  } finally {
+    extracting.value = false
+  }
+}
+
 // 辅助函数
+const isRequestType = (name: string) => {
+  return name?.startsWith('请求提取')
+}
+
+const getTypeLabel = (name: string) => {
+  return name?.startsWith('请求提取') ? '请求提取' : '异常检测'
+}
+
+const getTypeTheme = (name: string) => {
+  return name?.startsWith('请求提取') ? 'primary' : 'warning'
+}
+
 const getStatusTheme = (status: string) => {
   const map: Record<string, string> = {
     'completed': 'success',
@@ -143,5 +242,10 @@ const formatFileSize = (size: number) => {
 <style scoped>
 .tasks-page {
   max-width: 1200px;
+}
+
+.task-name {
+  display: flex;
+  align-items: center;
 }
 </style>

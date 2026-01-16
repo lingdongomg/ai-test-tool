@@ -59,12 +59,12 @@ CREATE TABLE IF NOT EXISTS `parsed_requests` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='解析请求表';
 
 -- 测试用例表（以接口为维度）
--- 注意：通过 case_id 前缀匹配关联接口，case_id 格式为 {endpoint_id}_{hash}
--- task_id 字段用于存储关联的 endpoint_id
+-- 注意：task_id 字段用于存储关联的 endpoint_id（不是 analysis_tasks 的 task_id）
+-- case_id 格式为 {endpoint_id}_{hash}
 CREATE TABLE IF NOT EXISTS `test_cases` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     `case_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '用例唯一ID，格式: {endpoint_id}_{hash}',
-    `task_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID（endpoint_id）',
+    `task_id` VARCHAR(64) NOT NULL COMMENT '关联接口ID（endpoint_id），注意：不是analysis_tasks的外键',
     `name` VARCHAR(255) NOT NULL COMMENT '用例名称',
     `description` TEXT COMMENT '用例描述',
     `category` ENUM('normal', 'boundary', 'exception', 'performance', 'security') DEFAULT 'normal' COMMENT '用例类别',
@@ -518,3 +518,32 @@ CREATE TABLE IF NOT EXISTS `ai_insights` (
     INDEX `idx_is_resolved` (`is_resolved`),
     INDEX `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI洞察表';
+
+-- =====================================================
+-- 测试用例生成任务表（异步任务）
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS `test_generation_tasks` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `task_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '任务唯一ID',
+    `task_type` ENUM('single', 'batch') DEFAULT 'single' COMMENT '任务类型',
+    `status` ENUM('pending', 'running', 'completed', 'failed') DEFAULT 'pending' COMMENT '任务状态',
+    `endpoint_ids` JSON COMMENT '目标接口ID列表',
+    `tag_filter` VARCHAR(100) COMMENT '标签筛选',
+    `test_types` JSON COMMENT '测试类型',
+    `use_ai` TINYINT(1) DEFAULT 1 COMMENT '是否使用AI',
+    `skip_existing` TINYINT(1) DEFAULT 1 COMMENT '跳过已有用例的接口',
+    `total_endpoints` INT DEFAULT 0 COMMENT '总接口数',
+    `processed_endpoints` INT DEFAULT 0 COMMENT '已处理接口数',
+    `success_count` INT DEFAULT 0 COMMENT '成功数',
+    `failed_count` INT DEFAULT 0 COMMENT '失败数',
+    `total_cases_generated` INT DEFAULT 0 COMMENT '生成的用例总数',
+    `error_message` TEXT COMMENT '错误信息',
+    `errors` JSON COMMENT '详细错误列表',
+    `started_at` DATETIME COMMENT '开始时间',
+    `completed_at` DATETIME COMMENT '完成时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_status` (`status`),
+    INDEX `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例生成任务表';

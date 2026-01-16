@@ -93,6 +93,7 @@
           <t-space>
             <t-link theme="primary" @click="handleView(row)">详情</t-link>
             <t-link theme="primary" @click="handleEdit(row)">编辑</t-link>
+            <t-link theme="primary" @click="handleCopy(row)">复制</t-link>
             <t-link theme="primary" @click="handleExecute(row)">执行</t-link>
             <t-popconfirm content="确定删除该测试用例？" @confirm="handleDelete(row)">
               <t-link theme="danger">删除</t-link>
@@ -165,7 +166,7 @@
     <!-- 编辑对话框 -->
     <t-dialog
       v-model:visible="editDialogVisible"
-      header="编辑测试用例"
+      :header="isCreating ? '复制测试用例' : '编辑测试用例'"
       width="700px"
       :confirm-btn="{ content: '保存', loading: saving }"
       @confirm="confirmEdit"
@@ -173,7 +174,7 @@
       <t-form :data="editForm" label-width="100px" label-align="top">
         <t-row :gutter="16">
           <t-col :span="12">
-            <t-form-item label="用例名称">
+            <t-form-item label="用例名称" required>
               <t-input v-model="editForm.name" placeholder="请输入用例名称" />
             </t-form-item>
           </t-col>
@@ -201,6 +202,24 @@
           <t-textarea v-model="editForm.description" placeholder="请输入用例描述" :rows="2" />
         </t-form-item>
         <t-row :gutter="16">
+          <t-col :span="6">
+            <t-form-item label="请求方法">
+              <t-select v-model="editForm.method" style="width: 100%;">
+                <t-option value="GET">GET</t-option>
+                <t-option value="POST">POST</t-option>
+                <t-option value="PUT">PUT</t-option>
+                <t-option value="DELETE">DELETE</t-option>
+                <t-option value="PATCH">PATCH</t-option>
+              </t-select>
+            </t-form-item>
+          </t-col>
+          <t-col :span="18">
+            <t-form-item label="请求URL">
+              <t-input v-model="editForm.url" placeholder="/api/v1/xxx" />
+            </t-form-item>
+          </t-col>
+        </t-row>
+        <t-row :gutter="16">
           <t-col :span="12">
             <t-form-item label="期望状态码">
               <t-input-number v-model="editForm.expected_status_code" :min="100" :max="599" style="width: 100%;" />
@@ -220,19 +239,19 @@
             style="font-family: monospace;"
           />
         </t-form-item>
-        <t-form-item label="请求体 (JSON)">
-          <t-textarea 
-            v-model="editForm.bodyStr" 
-            placeholder='{"key": "value"}' 
-            :rows="5"
-            style="font-family: monospace;"
-          />
-        </t-form-item>
         <t-form-item label="查询参数 (JSON)">
           <t-textarea 
             v-model="editForm.queryParamsStr" 
             placeholder='{"page": 1, "size": 10}' 
             :rows="2"
+            style="font-family: monospace;"
+          />
+        </t-form-item>
+        <t-form-item label="请求体 (JSON)">
+          <t-textarea 
+            v-model="editForm.bodyStr" 
+            placeholder='{"key": "value"}' 
+            :rows="5"
             style="font-family: monospace;"
           />
         </t-form-item>
@@ -281,11 +300,14 @@ const currentCase = ref<any>(null)
 const editDialogVisible = ref(false)
 const saving = ref(false)
 const editingCaseId = ref('')
+const isCreating = ref(false)  // 是否为复制创建新用例
 const editForm = reactive({
   name: '',
   description: '',
   category: '',
   priority: '',
+  method: 'GET',
+  url: '',
   expected_status_code: 200,
   max_response_time_ms: 3000,
   headersStr: '{}',
@@ -301,7 +323,7 @@ const columns = [
   { colKey: 'category', title: '类别', width: 100 },
   { colKey: 'priority', title: '优先级', width: 80 },
   { colKey: 'is_enabled', title: '启用', width: 80 },
-  { colKey: 'op', title: '操作', width: 200, fixed: 'right' }
+  { colKey: 'op', title: '操作', width: 240, fixed: 'right' }
 ]
 
 // 加载数据
@@ -363,11 +385,14 @@ const handleView = (row: any) => {
 
 // 编辑
 const handleEdit = (row: any) => {
+  isCreating.value = false
   editingCaseId.value = row.case_id
   editForm.name = row.name || ''
   editForm.description = row.description || ''
   editForm.category = row.category || 'normal'
   editForm.priority = row.priority || 'medium'
+  editForm.method = row.method || 'GET'
+  editForm.url = row.url || ''
   editForm.expected_status_code = row.expected_status_code || 200
   editForm.max_response_time_ms = row.max_response_time_ms || 3000
   editForm.headersStr = JSON.stringify(row.headers || {}, null, 2)
@@ -377,8 +402,31 @@ const handleEdit = (row: any) => {
   editDialogVisible.value = true
 }
 
-// 确认编辑
+// 复制用例
+const handleCopy = (row: any) => {
+  isCreating.value = true
+  editingCaseId.value = row.case_id
+  editForm.name = row.name + ' (副本)'
+  editForm.description = row.description || ''
+  editForm.category = row.category || 'normal'
+  editForm.priority = row.priority || 'medium'
+  editForm.method = row.method || 'GET'
+  editForm.url = row.url || ''
+  editForm.expected_status_code = row.expected_status_code || 200
+  editForm.max_response_time_ms = row.max_response_time_ms || 3000
+  editForm.headersStr = JSON.stringify(row.headers || {}, null, 2)
+  editForm.bodyStr = JSON.stringify(row.body || {}, null, 2)
+  editForm.queryParamsStr = JSON.stringify(row.query_params || {}, null, 2)
+  editDialogVisible.value = true
+}
+
+// 确认编辑/复制
 const confirmEdit = async () => {
+  if (!editForm.name.trim()) {
+    MessagePlugin.warning('请输入用例名称')
+    return
+  }
+  
   saving.value = true
   try {
     // 解析 JSON 字符串
@@ -388,23 +436,33 @@ const confirmEdit = async () => {
     } catch { headers = {} }
     try {
       body = JSON.parse(editForm.bodyStr || '{}')
-    } catch { body = {} }
+    } catch { body = null }
     try {
       queryParams = JSON.parse(editForm.queryParamsStr || '{}')
     } catch { queryParams = {} }
 
-    await developmentApi.updateTest(editingCaseId.value, {
+    const data = {
       name: editForm.name,
       description: editForm.description,
       category: editForm.category,
       priority: editForm.priority,
+      method: editForm.method,
+      url: editForm.url,
       expected_status_code: editForm.expected_status_code,
       max_response_time_ms: editForm.max_response_time_ms,
       headers,
       body,
       query_params: queryParams
-    })
-    MessagePlugin.success('保存成功')
+    }
+
+    if (isCreating.value) {
+      await developmentApi.copyTest(editingCaseId.value, data)
+      MessagePlugin.success('复制成功')
+    } else {
+      await developmentApi.updateTest(editingCaseId.value, data)
+      MessagePlugin.success('保存成功')
+    }
+    
     editDialogVisible.value = false
     loadTestCases()
   } catch (error) {

@@ -65,7 +65,7 @@ export const developmentApi = {
   getEndpoint: (endpointId: string) => 
     api.get(`/development/endpoints/${endpointId}`),
   
-  // 测试用例生成
+  // 测试用例生成（异步任务）
   generateTests: (data: {
     endpoint_ids?: string[]
     tag_filter?: string
@@ -78,6 +78,17 @@ export const developmentApi = {
     test_types?: string[]
     use_ai?: boolean
   }) => api.post(`/development/tests/generate/${endpointId}`, null, { params }),
+  
+  // 查询生成任务状态
+  getGenerateTaskStatus: (taskId: string) => 
+    api.get(`/development/tests/generate/${taskId}`),
+  
+  // 获取生成任务列表
+  listGenerateTasks: (params?: {
+    status?: string
+    page?: number
+    page_size?: number
+  }) => api.get('/development/tests/generate-tasks', { params }),
   
   // 测试用例管理
   listTests: (params?: {
@@ -110,6 +121,21 @@ export const developmentApi = {
   
   deleteTest: (testCaseId: string) => 
     api.delete(`/development/tests/${testCaseId}`),
+  
+  // 复制测试用例
+  copyTest: (testCaseId: string, data?: {
+    name?: string
+    description?: string
+    category?: string
+    priority?: string
+    method?: string
+    url?: string
+    headers?: Record<string, any>
+    body?: Record<string, any>
+    query_params?: Record<string, any>
+    expected_status_code?: number
+    max_response_time_ms?: number
+  }) => api.post(`/development/tests/${testCaseId}/copy`, data),
   
   // 测试执行
   executeTests: (data: {
@@ -225,15 +251,19 @@ export const monitoringApi = {
 export const insightsApi = {
   // 日志上传
   uploadLog: (file: File, params?: {
+    analysis_type?: string  // anomaly | request
     detect_types?: string
     include_ai_analysis?: boolean
+    max_lines?: number | null
   }) => {
     const formData = new FormData()
     formData.append('file', file)
+    if (params?.analysis_type) formData.append('analysis_type', params.analysis_type)
     if (params?.detect_types) formData.append('detect_types', params.detect_types)
     if (params?.include_ai_analysis !== undefined) {
       formData.append('include_ai_analysis', String(params.include_ai_analysis))
     }
+    if (params?.max_lines) formData.append('max_lines', String(params.max_lines))
     return api.post('/insights/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })

@@ -53,12 +53,12 @@ async def get_dashboard_stats():
     total_cases_result = db.fetch_one("SELECT COUNT(*) as cnt FROM test_cases")
     enabled_cases_result = db.fetch_one("SELECT COUNT(*) as cnt FROM test_cases WHERE is_enabled = 1")
     
-    # 检查 test_cases 表是否有 endpoint_id 列
-    try:
-        covered_result = db.fetch_one("SELECT COUNT(DISTINCT case_id) as cnt FROM test_cases")
-        covered_endpoints = covered_result['cnt'] if covered_result else 0
-    except:
-        covered_endpoints = 0
+    # 统计有测试用例覆盖的接口数量（通过 case_id 前缀匹配 endpoint_id）
+    covered_result = db.fetch_one("""
+        SELECT COUNT(*) as cnt FROM api_endpoints e
+        WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE CONCAT(e.endpoint_id, '%'))
+    """)
+    covered_endpoints = covered_result['cnt'] if covered_result else 0
     
     coverage_stats = {
         'total_endpoints': total_endpoints_result['cnt'] if total_endpoints_result else 0,

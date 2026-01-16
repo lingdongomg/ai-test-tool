@@ -31,20 +31,52 @@
           <t-divider />
           
           <t-form :data="uploadForm" label-width="100px">
-            <t-form-item label="检测类型">
-              <t-checkbox-group v-model="uploadForm.detect_types">
-                <t-checkbox value="error">错误日志</t-checkbox>
-                <t-checkbox value="warning">警告日志</t-checkbox>
-                <t-checkbox value="exception">异常堆栈</t-checkbox>
-                <t-checkbox value="performance">性能异常</t-checkbox>
-                <t-checkbox value="security">安全风险</t-checkbox>
-              </t-checkbox-group>
+            <t-form-item label="分析类型">
+              <t-radio-group v-model="uploadForm.analysis_type">
+                <t-radio value="anomaly">
+                  <span>异常检测</span>
+                  <t-tooltip content="检测日志中的错误、警告、异常等">
+                    <InfoCircleIcon style="margin-left: 4px; color: rgba(0,0,0,0.4);" />
+                  </t-tooltip>
+                </t-radio>
+                <t-radio value="request">
+                  <span>请求提取</span>
+                  <t-tooltip content="解析日志中的HTTP请求，可用于提取监控用例">
+                    <InfoCircleIcon style="margin-left: 4px; color: rgba(0,0,0,0.4);" />
+                  </t-tooltip>
+                </t-radio>
+              </t-radio-group>
             </t-form-item>
-            <t-form-item label="AI 分析">
-              <t-switch v-model="uploadForm.include_ai_analysis" />
-              <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">使用 AI 分析异常原因</span>
-            </t-form-item>
-            <t-form-item>
+            
+            <template v-if="uploadForm.analysis_type === 'anomaly'">
+              <t-form-item label="检测类型">
+                <t-checkbox-group v-model="uploadForm.detect_types">
+                  <t-checkbox value="error">错误日志</t-checkbox>
+                  <t-checkbox value="warning">警告日志</t-checkbox>
+                  <t-checkbox value="exception">异常堆栈</t-checkbox>
+                  <t-checkbox value="performance">性能异常</t-checkbox>
+                  <t-checkbox value="security">安全风险</t-checkbox>
+                </t-checkbox-group>
+              </t-form-item>
+              <t-form-item label="AI 分析">
+                <t-switch v-model="uploadForm.include_ai_analysis" />
+                <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">使用 AI 分析异常原因</span>
+              </t-form-item>
+            </template>
+            
+            <template v-else>
+              <t-form-item label="最大行数">
+                <t-input-number v-model="uploadForm.max_lines" :min="100" :max="100000" placeholder="不限制" />
+                <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">留空表示处理全部</span>
+              </t-form-item>
+              <t-alert theme="info" style="margin-top: 8px;">
+                <template #message>
+                  请求提取会解析日志中的HTTP请求，完成后可在"线上监控 → 监控用例"中提取为监控用例
+                </template>
+              </t-alert>
+            </template>
+            
+            <t-form-item style="margin-top: 16px;">
               <t-button 
                 theme="primary" 
                 :loading="uploading" 
@@ -52,7 +84,7 @@
                 @click="handleUpload"
               >
                 <template #icon><UploadIcon /></template>
-                开始分析
+                {{ uploadForm.analysis_type === 'anomaly' ? '开始检测' : '开始提取' }}
               </t-button>
             </t-form-item>
           </t-form>
@@ -138,7 +170,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { UploadIcon, FileIcon, SearchIcon } from 'tdesign-icons-vue-next'
+import { UploadIcon, FileIcon, SearchIcon, InfoCircleIcon } from 'tdesign-icons-vue-next'
 import { insightsApi } from '../../api/v2'
 
 const router = useRouter()
@@ -147,8 +179,10 @@ const router = useRouter()
 const fileList = ref<any[]>([])
 const uploading = ref(false)
 const uploadForm = reactive({
+  analysis_type: 'anomaly' as 'anomaly' | 'request',
   detect_types: ['error', 'warning', 'exception'],
-  include_ai_analysis: true
+  include_ai_analysis: true,
+  max_lines: null as number | null
 })
 
 // 粘贴分析
@@ -173,11 +207,14 @@ const handleUpload = async () => {
   try {
     const file = fileList.value[0].raw
     const res = await insightsApi.uploadLog(file, {
-      detect_types: uploadForm.detect_types.join(','),
-      include_ai_analysis: uploadForm.include_ai_analysis
+      analysis_type: uploadForm.analysis_type,
+      detect_types: uploadForm.analysis_type === 'anomaly' ? uploadForm.detect_types.join(',') : undefined,
+      include_ai_analysis: uploadForm.analysis_type === 'anomaly' ? uploadForm.include_ai_analysis : undefined,
+      max_lines: uploadForm.analysis_type === 'request' ? uploadForm.max_lines : undefined
     })
     
-    MessagePlugin.success('上传成功，正在后台分析')
+    const actionText = uploadForm.analysis_type === 'anomaly' ? '检测异常' : '提取请求'
+    MessagePlugin.success(`上传成功，正在后台${actionText}`)
     
     // 跳转到任务列表
     router.push('/insights/tasks')

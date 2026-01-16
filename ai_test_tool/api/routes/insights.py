@@ -3,7 +3,7 @@
 场景三：日志分析与异常检测
 """
 
-from typing import Any
+from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 import json
@@ -12,6 +12,11 @@ import uuid
 
 from ...services import LogAnomalyDetectorService, AIAssistantService
 from ...database import get_db_manager
+from ...database.repository import RequestRepository
+from ...database.models import ParsedRequestRecord
+from ...parser.log_parser import LogParser
+from ...llm.chains import LogAnalysisChain
+from ...llm.provider import get_llm_provider
 from ...utils.logger import get_logger
 
 router = APIRouter()
@@ -31,6 +36,12 @@ class AnalyzeLogRequest(BaseModel):
     )
 
 
+class ParseRequestsRequest(BaseModel):
+    """解析请求"""
+    task_id: str = Field(..., description="任务ID")
+    max_lines: int | None = Field(default=None, description="最大处理行数")
+
+
 class AnomalyReport(BaseModel):
     """异常报告"""
     report_id: str
@@ -48,14 +59,19 @@ class AnomalyReport(BaseModel):
 @router.post("/upload")
 async def upload_log_file(
     file: UploadFile = File(...),
+    analysis_type: str = Form(default="anomaly", description="分析类型: anomaly(异常检测) 或 request(请求提取)"),
     detect_types: str | None = Form(default=None),
     include_ai_analysis: bool = Form(default=True),
+    max_lines: int | None = Form(default=None, description="最大处理行数"),
     background_tasks: BackgroundTasks = None
 ):
     """
     上传日志文件进行分析
     
     支持格式：.log, .txt, .json
+    分析类型：
+    - anomaly: 异常检测（检测错误、警告等）
+    - request: 请求提取（解析HTTP请求，用于提取监控用例）
     """
     # 验证文件类型
     allowed_extensions = {'.log', '.txt', '.json'}
@@ -65,6 +81,13 @@ async def upload_log_file(
         raise HTTPException(
             status_code=400, 
             detail=f"不支持的文件类型，支持: {', '.join(allowed_extensions)}"
+        )
+    
+    # 验证分析类型
+    if analysis_type not in ('anomaly', 'request'):
+        raise HTTPException(
+            status_code=400,
+            detail="分析类型必须是 anomaly 或 request"
         )
     
     # 保存文件
@@ -81,29 +104,39 @@ async def upload_log_file(
         
         # 创建分析任务
         db = get_db_manager()
+        task_name = f"日志分析-{file.filename}" if analysis_type == "anomaly" else f"请求提取-{file.filename}"
         db.execute("""
             INSERT INTO analysis_tasks 
             (task_id, name, log_file_path, log_file_size, status)
             VALUES (%s, %s, %s, %s, 'pending')
-        """, (task_id, f"日志分析-{file.filename}", file_path, len(content)))
+        """, (task_id, task_name, file_path, len(content)))
         
         # 后台执行分析
         if background_tasks:
-            types_list = detect_types.split(',') if detect_types else None
-            background_tasks.add_task(
-                _analyze_log_task, 
-                task_id, 
-                file_path, 
-                types_list,
-                include_ai_analysis
-            )
+            if analysis_type == "anomaly":
+                types_list = detect_types.split(',') if detect_types else None
+                background_tasks.add_task(
+                    _analyze_log_task, 
+                    task_id, 
+                    file_path, 
+                    types_list,
+                    include_ai_analysis
+                )
+            else:
+                background_tasks.add_task(
+                    _parse_requests_task,
+                    task_id,
+                    file_path,
+                    max_lines
+                )
         
         return {
             "success": True,
             "task_id": task_id,
             "file_name": file.filename,
             "file_size": len(content),
-            "message": "文件上传成功，正在后台分析"
+            "analysis_type": analysis_type,
+            "message": f"文件上传成功，正在后台{'解析请求' if analysis_type == 'request' else '检测异常'}"
         }
     
     except Exception as e:
@@ -200,6 +233,106 @@ async def _analyze_log_task(
         
     except Exception as e:
         logger.error(f"分析任务失败: {e}")
+        db.execute("""
+            UPDATE analysis_tasks 
+            SET status = 'failed', error_message = %s
+            WHERE task_id = %s
+        """, (str(e), task_id))
+
+
+async def _parse_requests_task(
+    task_id: str,
+    file_path: str,
+    max_lines: int | None
+):
+    """后台解析请求任务 - 将日志中的HTTP请求提取出来"""
+    db = get_db_manager()
+    task_logger = get_logger(verbose=True)
+    
+    try:
+        # 更新状态为运行中
+        db.execute(
+            "UPDATE analysis_tasks SET status = 'running', started_at = NOW() WHERE task_id = %s",
+            (task_id,)
+        )
+        
+        # 初始化解析器
+        try:
+            provider = get_llm_provider()
+            llm_chain = LogAnalysisChain(provider, verbose=True)
+        except Exception as e:
+            task_logger.warn(f"无法初始化AI，使用基础解析: {e}")
+            llm_chain = None
+        
+        parser = LogParser(llm_chain=llm_chain, verbose=True)
+        request_repo = RequestRepository()
+        
+        total_requests = 0
+        total_lines = 0
+        
+        # 计算总行数
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            total_lines = sum(1 for _ in f)
+        
+        db.execute(
+            "UPDATE analysis_tasks SET total_lines = %s WHERE task_id = %s",
+            (total_lines, task_id)
+        )
+        
+        # 解析日志文件
+        for batch_requests in parser.parse_file(file_path, max_lines=max_lines):
+            # 转换为数据库记录
+            records = []
+            for req in batch_requests:
+                record = ParsedRequestRecord(
+                    task_id=task_id,
+                    request_id=req.request_id or str(uuid.uuid4())[:16],
+                    method=req.method,
+                    url=req.url,
+                    category=req.category,
+                    headers=json.dumps(req.headers, ensure_ascii=False) if req.headers else None,
+                    body=req.body,
+                    query_params=json.dumps(req.query_params, ensure_ascii=False) if req.query_params else None,
+                    http_status=req.http_status,
+                    response_time_ms=req.response_time_ms,
+                    response_body=req.response_body,
+                    has_error=req.has_error,
+                    error_message=req.error_message,
+                    has_warning=req.has_warning,
+                    warning_message=req.warning_message,
+                    curl_command=req.curl_command,
+                    timestamp=req.timestamp,
+                    raw_logs='\n'.join(req.raw_logs) if req.raw_logs else None,
+                    metadata=json.dumps(req.metadata, ensure_ascii=False) if req.metadata else None
+                )
+                records.append(record)
+            
+            # 批量保存
+            if records:
+                request_repo.create_batch(records)
+                total_requests += len(records)
+                
+                # 更新进度
+                db.execute(
+                    "UPDATE analysis_tasks SET total_requests = %s WHERE task_id = %s",
+                    (total_requests, task_id)
+                )
+        
+        # 更新状态为完成
+        db.execute("""
+            UPDATE analysis_tasks 
+            SET status = 'completed', 
+                total_requests = %s,
+                completed_at = NOW()
+            WHERE task_id = %s
+        """, (total_requests, task_id))
+        
+        task_logger.info(f"请求解析完成: 共提取 {total_requests} 个请求")
+        
+    except Exception as e:
+        logger.error(f"请求解析任务失败: {e}")
+        import traceback
+        traceback.print_exc()
         db.execute("""
             UPDATE analysis_tasks 
             SET status = 'failed', error_message = %s

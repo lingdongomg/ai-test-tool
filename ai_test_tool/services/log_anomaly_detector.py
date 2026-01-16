@@ -288,6 +288,73 @@ class LogAnomalyDetectorService:
         
         return self._aggregate_anomalies(anomalies)
     
+    def detect_anomalies_from_file(
+        self,
+        file_path: str,
+        task_id: str,
+        detect_types: list[str] | None = None,
+        include_ai_analysis: bool = True
+    ) -> AnomalyReport:
+        """
+        从日志文件检测异常
+        
+        Args:
+            file_path: 日志文件路径
+            task_id: 关联任务ID
+            detect_types: 要检测的异常类型
+            include_ai_analysis: 是否包含AI分析
+            
+        Returns:
+            异常报告
+        """
+        self.logger.start_step(f"从文件检测异常: {file_path}")
+        
+        # 读取文件内容
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                log_content = f.read()
+        except Exception as e:
+            self.logger.error(f"读取文件失败: {e}")
+            raise
+        
+        # 检测异常
+        anomalies = self.detect_anomalies_from_log_content(log_content, file_path)
+        
+        # 按类型过滤
+        if detect_types:
+            type_set = set(detect_types)
+            anomalies = [a for a in anomalies if a.anomaly_type.value in type_set]
+        
+        # 统计
+        critical_count = sum(1 for a in anomalies if a.severity == AnomalySeverity.CRITICAL)
+        error_count = sum(1 for a in anomalies if a.severity == AnomalySeverity.ERROR)
+        warning_count = sum(1 for a in anomalies if a.severity == AnomalySeverity.WARNING)
+        
+        self.logger.info(f"检测到 {len(anomalies)} 个异常: {critical_count} 严重, {error_count} 错误, {warning_count} 警告")
+        
+        # AI 分析
+        ai_analysis = None
+        recommendations: list[str] = []
+        if include_ai_analysis and anomalies:
+            try:
+                ai_result = self._ai_analyze_anomalies(anomalies)
+                ai_analysis = ai_result.get('analysis', '')
+                recommendations = ai_result.get('recommendations', [])
+            except Exception as e:
+                self.logger.warn(f"AI 分析失败: {e}")
+        
+        # 生成报告
+        report = self._create_report(
+            task_id, anomalies, ai_analysis, recommendations
+        )
+        
+        # 保存报告
+        self._save_report(report)
+        
+        self.logger.end_step(f"生成异常报告: {report.report_id}")
+        
+        return report
+    
     def _detect_error_logs(self, requests: list[dict[str, Any]]) -> list[LogAnomaly]:
         """检测错误日志"""
         anomalies: list[LogAnomaly] = []

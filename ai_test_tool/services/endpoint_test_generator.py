@@ -62,6 +62,7 @@ class EndpointTestGeneratorService:
         self,
         endpoint_id: str,
         test_types: list[str] | None = None,
+        use_ai: bool = True,
         save_to_db: bool = True
     ) -> list[GeneratedTestCase]:
         """
@@ -83,7 +84,7 @@ class EndpointTestGeneratorService:
         self.logger.info(f"为接口生成测试用例: {endpoint['method']} {endpoint['path']}")
         
         # 生成测试用例
-        test_cases = self._generate_test_cases(endpoint, test_types)
+        test_cases = self._generate_test_cases(endpoint, test_types, use_ai=use_ai)
         
         # 保存到数据库
         if save_to_db and test_cases:
@@ -93,8 +94,10 @@ class EndpointTestGeneratorService:
     
     def generate_for_all_endpoints(
         self,
+        endpoint_ids: list[str] | None = None,
         tag_filter: str | None = None,
         test_types: list[str] | None = None,
+        use_ai: bool = True,
         skip_existing: bool = True,
         save_to_db: bool = True
     ) -> dict[str, Any]:
@@ -112,8 +115,13 @@ class EndpointTestGeneratorService:
         """
         self.logger.start_step("批量生成测试用例")
         
-        # 获取所有接口
-        endpoints = self._get_all_endpoints(tag_filter)
+        # 获取接口列表
+        if endpoint_ids:
+            # 根据指定的 endpoint_ids 获取
+            endpoints = [self._get_endpoint(eid) for eid in endpoint_ids]
+            endpoints = [e for e in endpoints if e is not None]
+        else:
+            endpoints = self._get_all_endpoints(tag_filter)
         
         if skip_existing:
             # 过滤掉已有测试用例的接口
@@ -129,7 +137,7 @@ class EndpointTestGeneratorService:
             try:
                 self.logger.debug(f"处理接口 {i+1}/{total}: {endpoint['method']} {endpoint['path']}")
                 
-                test_cases = self._generate_test_cases(endpoint, test_types)
+                test_cases = self._generate_test_cases(endpoint, test_types, use_ai=use_ai)
                 
                 if save_to_db and test_cases:
                     self._save_test_cases(endpoint['endpoint_id'], test_cases)
@@ -155,7 +163,8 @@ class EndpointTestGeneratorService:
     def _generate_test_cases(
         self,
         endpoint: dict[str, Any],
-        test_types: list[str] | None = None
+        test_types: list[str] | None = None,
+        use_ai: bool = True
     ) -> list[GeneratedTestCase]:
         """生成测试用例的核心逻辑"""
         test_types = test_types or ["normal", "boundary", "exception", "security"]
@@ -165,12 +174,13 @@ class EndpointTestGeneratorService:
         rule_based_cases = self._generate_rule_based_cases(endpoint, test_types)
         test_cases.extend(rule_based_cases)
         
-        # 2. 使用 AI 增强生成更智能的测试用例
-        try:
-            ai_cases = self._generate_ai_cases(endpoint, test_types)
-            test_cases.extend(ai_cases)
-        except Exception as e:
-            self.logger.warn(f"AI 生成失败，仅使用规则生成: {e}")
+        # 2. 使用 AI 增强生成更智能的测试用例（如果启用）
+        if use_ai:
+            try:
+                ai_cases = self._generate_ai_cases(endpoint, test_types)
+                test_cases.extend(ai_cases)
+            except Exception as e:
+                self.logger.warn(f"AI 生成失败，仅使用规则生成: {e}")
         
         # 去重
         test_cases = self._deduplicate_cases(test_cases)

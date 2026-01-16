@@ -3,8 +3,11 @@
 场景一：开发阶段的接口测试
 """
 
-from typing import Any
-from fastapi import APIRouter, HTTPException, Query
+import json
+import uuid
+from datetime import datetime
+from typing import Any, Optional
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from ...services import EndpointTestGeneratorService, AIAssistantService
@@ -55,6 +58,8 @@ class UpdateTestCaseRequest(BaseModel):
     description: str | None = Field(default=None, description="用例描述")
     category: str | None = Field(default=None, description="用例类别: normal, boundary, exception, performance, security")
     priority: str | None = Field(default=None, description="优先级: high, medium, low")
+    method: str | None = Field(default=None, description="HTTP方法")
+    url: str | None = Field(default=None, description="请求URL")
     headers: dict | None = Field(default=None, description="请求头")
     body: dict | None = Field(default=None, description="请求体")
     query_params: dict | None = Field(default=None, description="查询参数")
@@ -209,104 +214,251 @@ def _calculate_pass_rate(executions) -> float:
 
 # ==================== 测试用例生成 ====================
 
+def _run_generate_task(task_id: str, request_data: dict):
+    """后台执行测试用例生成任务"""
+    db = get_db_manager()
+    
+    try:
+        # 更新任务状态为运行中
+        db.execute("""
+            UPDATE test_generation_tasks 
+            SET status = 'running', started_at = NOW() 
+            WHERE task_id = %s
+        """, (task_id,))
+        
+        service = EndpointTestGeneratorService(verbose=True)
+        endpoint_ids = request_data.get('endpoint_ids')
+        tag_filter = request_data.get('tag_filter')
+        test_types = request_data.get('test_types')
+        use_ai = request_data.get('use_ai', True)
+        skip_existing = request_data.get('skip_existing', True)
+        
+        if endpoint_ids and len(endpoint_ids) == 1:
+            # 单个接口
+            test_cases = service.generate_for_endpoint(
+                endpoint_id=endpoint_ids[0],
+                test_types=test_types,
+                use_ai=use_ai,
+                save_to_db=True
+            )
+            db.execute("""
+                UPDATE test_generation_tasks 
+                SET status = 'completed', 
+                    total_endpoints = 1,
+                    processed_endpoints = 1,
+                    success_count = 1,
+                    total_cases_generated = %s,
+                    completed_at = NOW()
+                WHERE task_id = %s
+            """, (len(test_cases), task_id))
+        else:
+            # 批量生成
+            result = service.generate_for_all_endpoints(
+                endpoint_ids=endpoint_ids,
+                tag_filter=tag_filter,
+                test_types=test_types,
+                use_ai=use_ai,
+                skip_existing=skip_existing,
+                save_to_db=True
+            )
+            db.execute("""
+                UPDATE test_generation_tasks 
+                SET status = 'completed',
+                    total_endpoints = %s,
+                    processed_endpoints = %s,
+                    success_count = %s,
+                    failed_count = %s,
+                    total_cases_generated = %s,
+                    errors = %s,
+                    completed_at = NOW()
+                WHERE task_id = %s
+            """, (
+                result['total_endpoints'],
+                result['total_endpoints'],
+                result['success_count'],
+                result['failed_count'],
+                result['total_cases_generated'],
+                json.dumps(result.get('errors', []), ensure_ascii=False),
+                task_id
+            ))
+    
+    except Exception as e:
+        logger.error(f"生成任务失败: {e}")
+        db.execute("""
+            UPDATE test_generation_tasks 
+            SET status = 'failed', 
+                error_message = %s,
+                completed_at = NOW()
+            WHERE task_id = %s
+        """, (str(e), task_id))
+
+
 @router.post("/tests/generate")
-async def generate_tests(request: GenerateTestsRequest):
+async def generate_tests(request: GenerateTestsRequest, background_tasks: BackgroundTasks):
     """
-    为接口生成测试用例
+    为接口生成测试用例（异步任务）
     
     支持：
     - 为指定接口生成
     - 按标签批量生成
     - 为所有接口生成
-    """
-    try:
-        service = EndpointTestGeneratorService(verbose=True)
-        
-        if request.endpoint_ids and len(request.endpoint_ids) == 1:
-            # 单个接口
-            test_cases = service.generate_for_endpoint(
-                endpoint_id=request.endpoint_ids[0],
-                test_types=request.test_types,
-                use_ai=request.use_ai,
-                save_to_db=True
-            )
-            return {
-                "success": True,
-                "message": f"成功生成 {len(test_cases)} 个测试用例",
-                "total_endpoints": 1,
-                "total_cases": len(test_cases),
-                "cases": [
-                    {
-                        "id": tc.id,
-                        "name": tc.name,
-                        "category": tc.category,
-                        "priority": tc.priority
-                    }
-                    for tc in test_cases
-                ]
-            }
-        else:
-            # 批量生成
-            result = service.generate_for_all_endpoints(
-                endpoint_ids=request.endpoint_ids,
-                tag_filter=request.tag_filter,
-                test_types=request.test_types,
-                use_ai=request.use_ai,
-                skip_existing=request.skip_existing,
-                save_to_db=True
-            )
-            return {
-                "success": True,
-                "message": f"成功为 {result['success_count']} 个接口生成 {result['total_cases_generated']} 个测试用例",
-                "total_endpoints": result['total_endpoints'],
-                "success_count": result['success_count'],
-                "total_cases": result['total_cases_generated'],
-                "errors": result.get('errors', [])
-            }
     
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"生成测试用例失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    返回任务ID，可通过 GET /tests/generate/{task_id} 查询进度
+    """
+    db = get_db_manager()
+    task_id = str(uuid.uuid4())[:16]
+    task_type = 'single' if request.endpoint_ids and len(request.endpoint_ids) == 1 else 'batch'
+    
+    # 创建任务记录
+    db.execute("""
+        INSERT INTO test_generation_tasks 
+        (task_id, task_type, status, endpoint_ids, tag_filter, test_types, use_ai, skip_existing)
+        VALUES (%s, %s, 'pending', %s, %s, %s, %s, %s)
+    """, (
+        task_id,
+        task_type,
+        json.dumps(request.endpoint_ids, ensure_ascii=False) if request.endpoint_ids else None,
+        request.tag_filter,
+        json.dumps(request.test_types, ensure_ascii=False) if request.test_types else None,
+        1 if request.use_ai else 0,
+        1 if request.skip_existing else 0
+    ))
+    
+    # 添加后台任务
+    request_data = {
+        'endpoint_ids': request.endpoint_ids,
+        'tag_filter': request.tag_filter,
+        'test_types': request.test_types,
+        'use_ai': request.use_ai,
+        'skip_existing': request.skip_existing
+    }
+    background_tasks.add_task(_run_generate_task, task_id, request_data)
+    
+    return {
+        "success": True,
+        "message": "测试用例生成任务已创建，正在后台执行",
+        "task_id": task_id,
+        "task_type": task_type,
+        "status": "pending"
+    }
+
+
+@router.get("/tests/generate/{task_id}")
+async def get_generate_task_status(task_id: str):
+    """查询测试用例生成任务状态"""
+    db = get_db_manager()
+    
+    task = db.fetch_one("""
+        SELECT * FROM test_generation_tasks WHERE task_id = %s
+    """, (task_id,))
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    result = dict(task)
+    # 解析 JSON 字段
+    for field in ['endpoint_ids', 'test_types', 'errors']:
+        if result.get(field) and isinstance(result[field], str):
+            try:
+                result[field] = json.loads(result[field])
+            except:
+                pass
+    
+    return result
+
+
+@router.get("/tests/generate-tasks")
+async def list_generate_tasks(
+    status: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100)
+):
+    """获取测试用例生成任务列表"""
+    db = get_db_manager()
+    
+    conditions = []
+    params: list[Any] = []
+    
+    if status:
+        conditions.append("status = %s")
+        params.append(status)
+    
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    
+    # 获取总数
+    count_sql = f"SELECT COUNT(*) as count FROM test_generation_tasks {where_clause}"
+    count_result = db.fetch_one(count_sql, tuple(params) if params else None)
+    total = count_result['count'] if count_result else 0
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    sql = f"""
+        SELECT * FROM test_generation_tasks
+        {where_clause}
+        ORDER BY created_at DESC
+        LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = db.fetch_all(sql, tuple(params))
+    
+    items = []
+    for row in rows:
+        item = dict(row)
+        for field in ['endpoint_ids', 'test_types', 'errors']:
+            if item.get(field) and isinstance(item[field], str):
+                try:
+                    item[field] = json.loads(item[field])
+                except:
+                    pass
+        items.append(item)
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
 
 
 @router.post("/tests/generate/{endpoint_id}")
 async def generate_tests_for_endpoint(
     endpoint_id: str,
+    background_tasks: BackgroundTasks,
     test_types: list[str] | None = Query(default=None),
     use_ai: bool = Query(default=True)
 ):
-    """为单个接口生成测试用例（快捷接口）"""
-    try:
-        service = EndpointTestGeneratorService(verbose=True)
-        test_cases = service.generate_for_endpoint(
-            endpoint_id=endpoint_id,
-            test_types=test_types,
-            use_ai=use_ai,
-            save_to_db=True
-        )
-        return {
-            "success": True,
-            "endpoint_id": endpoint_id,
-            "total_cases": len(test_cases),
-            "cases": [
-                {
-                    "id": tc.id,
-                    "name": tc.name,
-                    "category": tc.category,
-                    "priority": tc.priority,
-                    "method": tc.method,
-                    "url": tc.url
-                }
-                for tc in test_cases
-            ]
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"生成测试用例失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """为单个接口生成测试用例（异步任务，快捷接口）"""
+    db = get_db_manager()
+    task_id = str(uuid.uuid4())[:16]
+    
+    # 创建任务记录
+    db.execute("""
+        INSERT INTO test_generation_tasks 
+        (task_id, task_type, status, endpoint_ids, test_types, use_ai, skip_existing)
+        VALUES (%s, 'single', 'pending', %s, %s, %s, 0)
+    """, (
+        task_id,
+        json.dumps([endpoint_id], ensure_ascii=False),
+        json.dumps(test_types, ensure_ascii=False) if test_types else None,
+        1 if use_ai else 0
+    ))
+    
+    # 添加后台任务
+    request_data = {
+        'endpoint_ids': [endpoint_id],
+        'test_types': test_types,
+        'use_ai': use_ai,
+        'skip_existing': False
+    }
+    background_tasks.add_task(_run_generate_task, task_id, request_data)
+    
+    return {
+        "success": True,
+        "message": "测试用例生成任务已创建",
+        "task_id": task_id,
+        "endpoint_id": endpoint_id,
+        "status": "pending"
+    }
 
 
 # ==================== 测试用例管理 ====================
@@ -329,39 +481,44 @@ async def list_test_cases(
     
     if endpoint_id:
         # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配
-        conditions.append("case_id LIKE %s")
+        conditions.append("tc.case_id LIKE %s")
         params.append(f"{endpoint_id}%")
     
     if category:
-        conditions.append("category = %s")
+        conditions.append("tc.category = %s")
         params.append(category)
     
     if priority:
-        conditions.append("priority = %s")
+        conditions.append("tc.priority = %s")
         params.append(priority)
     
     if is_enabled is not None:
-        conditions.append("is_enabled = %s")
+        conditions.append("tc.is_enabled = %s")
         params.append(is_enabled)
     
     if search:
-        conditions.append("(name LIKE %s OR description LIKE %s)")
+        conditions.append("(tc.name LIKE %s OR tc.description LIKE %s)")
         params.extend([f"%{search}%", f"%{search}%"])
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     
     # 获取总数
-    count_sql = f"SELECT COUNT(*) as count FROM test_cases {where_clause}"
+    count_sql = f"SELECT COUNT(*) as count FROM test_cases tc {where_clause}"
     count_result = db.fetch_one(count_sql, tuple(params) if params else None)
     total = count_result['count'] if count_result else 0
     
-    # 获取分页数据
+    # 获取分页数据，关联 api_endpoints 表获取接口信息
+    # 注意：test_cases.task_id 实际存储的是 endpoint_id
     offset = (page - 1) * page_size
-    # 直接从 test_cases 表查询，不做 JOIN
     sql = f"""
-        SELECT * FROM test_cases
+        SELECT 
+            tc.*,
+            e.method as endpoint_method,
+            e.path as endpoint_path
+        FROM test_cases tc
+        LEFT JOIN api_endpoints e ON tc.task_id = e.endpoint_id
         {where_clause}
-        ORDER BY priority, created_at DESC
+        ORDER BY tc.priority, tc.created_at DESC
         LIMIT %s OFFSET %s
     """
     params.extend([page_size, offset])
@@ -433,6 +590,14 @@ async def update_test_case(test_case_id: str, request: UpdateTestCaseRequest):
         updates.append("priority = %s")
         params.append(request.priority)
     
+    if request.method is not None:
+        updates.append("method = %s")
+        params.append(request.method)
+    
+    if request.url is not None:
+        updates.append("url = %s")
+        params.append(request.url)
+    
     if request.headers is not None:
         updates.append("headers = %s")
         params.append(json.dumps(request.headers))
@@ -482,6 +647,81 @@ async def update_test_case(test_case_id: str, request: UpdateTestCaseRequest):
     }
 
 
+@router.post("/tests/{test_case_id}/copy")
+async def copy_test_case(test_case_id: str, request: Optional[UpdateTestCaseRequest] = None):
+    """复制测试用例"""
+    import hashlib
+    
+    db = get_db_manager()
+    
+    # 获取原始用例
+    original = db.fetch_one("SELECT * FROM test_cases WHERE case_id = %s", (test_case_id,))
+    if not original:
+        raise HTTPException(status_code=404, detail="原始测试用例不存在")
+    
+    original = dict(original)
+    
+    # 生成新的 case_id
+    task_id = original['task_id']  # endpoint_id
+    timestamp = str(int(__import__('time').time() * 1000))
+    hash_str = hashlib.md5(timestamp.encode()).hexdigest()[:8]
+    new_case_id = f"{task_id}_{hash_str}"
+    
+    # 准备新用例数据，优先使用请求中的数据
+    new_data = {
+        'case_id': new_case_id,
+        'task_id': task_id,
+        'name': request.name if request and request.name else original['name'] + ' (副本)',
+        'description': request.description if request and request.description is not None else original.get('description'),
+        'category': request.category if request and request.category else original.get('category', 'normal'),
+        'priority': request.priority if request and request.priority else original.get('priority', 'medium'),
+        'method': request.method if request and hasattr(request, 'method') and request.method else original['method'],
+        'url': request.url if request and hasattr(request, 'url') and request.url else original['url'],
+        'headers': json.dumps(request.headers) if request and request.headers is not None else original.get('headers'),
+        'body': json.dumps(request.body) if request and request.body is not None else original.get('body'),
+        'query_params': json.dumps(request.query_params) if request and request.query_params is not None else original.get('query_params'),
+        'expected_status_code': request.expected_status_code if request and request.expected_status_code else original.get('expected_status_code', 200),
+        'max_response_time_ms': request.max_response_time_ms if request and request.max_response_time_ms else original.get('max_response_time_ms', 3000),
+        'expected_response': original.get('expected_response'),
+        'tags': original.get('tags'),
+        'group_name': original.get('group_name'),
+        'is_enabled': 1
+    }
+    
+    # 插入新用例
+    sql = """
+        INSERT INTO test_cases (
+            case_id, task_id, name, description, category, priority, 
+            method, url, headers, body, query_params, 
+            expected_status_code, max_response_time_ms, expected_response, 
+            tags, group_name, is_enabled
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, 
+            %s, %s, %s, %s, %s, 
+            %s, %s, %s, 
+            %s, %s, %s
+        )
+    """
+    db.execute(sql, (
+        new_data['case_id'], new_data['task_id'], new_data['name'], 
+        new_data['description'], new_data['category'], new_data['priority'],
+        new_data['method'], new_data['url'], new_data['headers'], 
+        new_data['body'], new_data['query_params'],
+        new_data['expected_status_code'], new_data['max_response_time_ms'], 
+        new_data['expected_response'],
+        new_data['tags'], new_data['group_name'], new_data['is_enabled']
+    ))
+    
+    # 返回新用例
+    new_case = db.fetch_one("SELECT * FROM test_cases WHERE case_id = %s", (new_case_id,))
+    
+    return {
+        "success": True,
+        "message": "测试用例复制成功",
+        "test_case": dict(new_case)
+    }
+
+
 @router.delete("/tests/{test_case_id}")
 async def delete_test_case(test_case_id: str):
     """删除测试用例"""
@@ -516,7 +756,9 @@ async def execute_tests(request: ExecuteTestsRequest):
     - 执行某接口的所有用例
     - 按标签执行
     """
-    from ...testing import TestRunner
+    from ...testing import TestExecutor, TestCase
+    from ...testing.test_case_generator import TestCaseCategory, TestCasePriority, ExpectedResult
+    from ...config import TestConfig
     import uuid
     
     db = get_db_manager()
@@ -531,18 +773,18 @@ async def execute_tests(request: ExecuteTestsRequest):
         params.extend(request.test_case_ids)
     
     if request.endpoint_id:
-        # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配
-        conditions.append("case_id LIKE %s")
-        params.append(f"{request.endpoint_id}%")
+        # test_cases 表没有 endpoint_id 列，通过 task_id 匹配
+        conditions.append("task_id = %s")
+        params.append(request.endpoint_id)
     
     if request.tag_filter:
-        # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配
+        # 通过 task_id (endpoint_id) 关联查询
         conditions.append("""
             EXISTS (
                 SELECT 1 FROM api_endpoints e
                 JOIN api_endpoint_tags et ON e.endpoint_id = et.endpoint_id
                 JOIN api_tags t ON et.tag_id = t.id
-                WHERE t.name = %s AND test_cases.case_id LIKE CONCAT(e.endpoint_id, '%')
+                WHERE t.name = %s AND test_cases.task_id = e.endpoint_id
             )
         """)
         params.append(request.tag_filter)
@@ -560,14 +802,75 @@ async def execute_tests(request: ExecuteTestsRequest):
     execution_id = str(uuid.uuid4())[:8]
     
     try:
-        runner = TestRunner(base_url=request.base_url)
-        results = runner.run_cases([dict(c) for c in cases])
+        # 转换数据库记录为 TestCase 对象
+        test_cases: list[TestCase] = []
+        for c in cases:
+            case_dict = dict(c)
+            
+            # 解析 JSON 字段
+            headers = case_dict.get('headers') or {}
+            if isinstance(headers, str):
+                headers = json.loads(headers) if headers else {}
+            
+            body = case_dict.get('body')
+            if isinstance(body, str):
+                body = json.loads(body) if body else None
+            
+            query_params = case_dict.get('query_params') or {}
+            if isinstance(query_params, str):
+                query_params = json.loads(query_params) if query_params else {}
+            
+            # 转换枚举
+            category_str = case_dict.get('category', 'normal')
+            priority_str = case_dict.get('priority', 'medium')
+            
+            try:
+                category = TestCaseCategory(category_str)
+            except ValueError:
+                category = TestCaseCategory.NORMAL
+            
+            try:
+                priority = TestCasePriority(priority_str)
+            except ValueError:
+                priority = TestCasePriority.MEDIUM
+            
+            # 创建 ExpectedResult
+            expected = ExpectedResult(
+                status_code=case_dict.get('expected_status_code', 200),
+                max_response_time_ms=case_dict.get('max_response_time_ms', 3000)
+            )
+            
+            test_case = TestCase(
+                id=case_dict['case_id'],
+                name=case_dict['name'],
+                description=case_dict.get('description', ''),
+                category=category,
+                priority=priority,
+                method=case_dict['method'],
+                url=case_dict['url'],
+                headers=headers,
+                body=body,
+                query_params=query_params,
+                expected=expected
+            )
+            test_cases.append(test_case)
+        
+        # 配置执行器
+        config = TestConfig(base_url=request.base_url)
+        executor = TestExecutor(config=config)
+        
+        # 执行测试
+        results = await executor.execute_test_suite(test_cases)
         
         # 统计结果
-        passed = sum(1 for r in results if r.get('status') == 'passed')
-        failed = sum(1 for r in results if r.get('status') == 'failed')
-        skipped = sum(1 for r in results if r.get('status') == 'skipped')
-        total_duration = sum(r.get('duration_ms', 0) for r in results)
+        passed = sum(1 for r in results if r.status.value == 'passed')
+        failed = sum(1 for r in results if r.status.value == 'failed')
+        error = sum(1 for r in results if r.status.value == 'error')
+        skipped = sum(1 for r in results if r.status.value == 'skipped')
+        total_duration = sum(r.actual_response_time_ms for r in results)
+        
+        # 转换结果为字典
+        result_dicts = [r.to_dict() for r in results]
         
         return {
             "success": True,
@@ -576,10 +879,11 @@ async def execute_tests(request: ExecuteTestsRequest):
             "total": len(results),
             "passed": passed,
             "failed": failed,
+            "error": error,
             "skipped": skipped,
             "pass_rate": round(passed / len(results) * 100, 2) if results else 0,
             "duration_ms": total_duration,
-            "results": results
+            "results": result_dicts
         }
     
     except Exception as e:

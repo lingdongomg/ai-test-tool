@@ -93,7 +93,8 @@ class ProductionMonitorService:
         self,
         task_id: str,
         min_success_rate: float = 0.9,
-        max_requests_per_endpoint: int = 5
+        max_requests_per_endpoint: int = 5,
+        tags: list[str] | None = None
     ) -> dict[str, Any]:
         """
         从日志分析任务中提取请求，存入线上自测库
@@ -137,7 +138,7 @@ class ProductionMonitorService:
             # 每个接口只保留部分请求
             for req in requests[:max_requests_per_endpoint]:
                 try:
-                    if self._save_production_request(req, task_id):
+                    if self._save_production_request(req, task_id, tags):
                         saved_count += 1
                     else:
                         skipped_count += 1
@@ -490,7 +491,7 @@ class ProductionMonitorService:
         path = re.sub(r'/\d+(?=/|$)', '/{id}', path)
         return path
     
-    def _save_production_request(self, req: dict[str, Any], task_id: str) -> bool:
+    def _save_production_request(self, req: dict[str, Any], task_id: str, extra_tags: list[str] | None = None) -> bool:
         """保存请求到线上自测库"""
         # 生成请求ID
         content = f"{req['method']}:{req['url']}:{req.get('body', '')}"
@@ -522,8 +523,10 @@ class ProductionMonitorService:
         # 推断期望状态码
         expected_status = req.get('http_status', 200)
         
-        # 从 URL 提取标签
+        # 从 URL 提取标签，并合并额外标签
         tags = self._extract_tags_from_url(req['url'])
+        if extra_tags:
+            tags = list(set(tags + extra_tags))
         
         self.db.execute(sql, (
             request_id,

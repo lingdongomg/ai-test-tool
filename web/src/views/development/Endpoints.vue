@@ -144,7 +144,7 @@
     <t-dialog
       v-model:visible="generateDialogVisible"
       header="生成测试用例"
-      :confirm-btn="{ content: '生成', loading: generating }"
+      :confirm-btn="{ content: '开始生成', loading: generating }"
       @confirm="confirmGenerate"
     >
       <t-form :data="generateForm" label-width="100px">
@@ -169,22 +169,65 @@
         </t-form-item>
         <t-form-item label="AI 增强">
           <t-switch v-model="generateForm.use_ai" />
-          <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">使用 AI 生成更智能的测试用例</span>
+          <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">使用 AI 生成更智能的测试用例（较慢）</span>
         </t-form-item>
         <t-form-item label="跳过已有">
           <t-switch v-model="generateForm.skip_existing" />
           <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">跳过已有测试用例的接口</span>
         </t-form-item>
       </t-form>
+      <t-alert v-if="generateForm.use_ai" theme="info" style="margin-top: 12px;">
+        AI 生成需要一定时间，任务将在后台执行，您可以稍后查看结果。
+      </t-alert>
+    </t-dialog>
+
+    <!-- 任务进度对话框 -->
+    <t-dialog
+      v-model:visible="taskDialogVisible"
+      header="生成任务进度"
+      :footer="false"
+      :close-on-overlay-click="false"
+    >
+      <div class="task-progress">
+        <t-loading v-if="currentTask?.status === 'pending' || currentTask?.status === 'running'" size="large" />
+        <CheckCircleFilledIcon v-else-if="currentTask?.status === 'completed'" class="task-icon success" />
+        <CloseCircleFilledIcon v-else-if="currentTask?.status === 'failed'" class="task-icon error" />
+        
+        <div class="task-status">
+          <span v-if="currentTask?.status === 'pending'">任务等待中...</span>
+          <span v-else-if="currentTask?.status === 'running'">正在生成测试用例...</span>
+          <span v-else-if="currentTask?.status === 'completed'">生成完成！</span>
+          <span v-else-if="currentTask?.status === 'failed'">生成失败</span>
+        </div>
+        
+        <div class="task-detail" v-if="currentTask">
+          <div v-if="currentTask.status === 'completed'">
+            <p>成功处理 {{ currentTask.success_count }} 个接口</p>
+            <p>共生成 {{ currentTask.total_cases_generated }} 个测试用例</p>
+          </div>
+          <div v-else-if="currentTask.status === 'failed'">
+            <p class="error-msg">{{ currentTask.error_message }}</p>
+          </div>
+        </div>
+        
+        <t-button 
+          v-if="currentTask?.status === 'completed' || currentTask?.status === 'failed'"
+          theme="primary" 
+          @click="closeTaskDialog"
+          style="margin-top: 16px;"
+        >
+          确定
+        </t-button>
+      </div>
     </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { SearchIcon, AddIcon, FileImportIcon } from 'tdesign-icons-vue-next'
+import { SearchIcon, AddIcon, FileImportIcon, CheckCircleFilledIcon, CloseCircleFilledIcon } from 'tdesign-icons-vue-next'
 import { developmentApi } from '../../api/v2'
 
 const router = useRouter()
@@ -216,6 +259,11 @@ const generateForm = reactive({
   use_ai: true,
   skip_existing: true
 })
+
+// 任务进度
+const taskDialogVisible = ref(false)
+const currentTask = ref<any>(null)
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // 表格列
 const columns = [
@@ -260,6 +308,13 @@ onMounted(() => {
   loadStatistics()
 })
 
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+})
+
 // 搜索
 const handleSearch = () => {
   pagination.current = 1
@@ -294,6 +349,27 @@ const handleBatchGenerate = () => {
   generateDialogVisible.value = true
 }
 
+// 轮询任务状态
+const pollTaskStatus = async (taskId: string) => {
+  try {
+    const task = await developmentApi.getGenerateTaskStatus(taskId)
+    currentTask.value = task
+    
+    if (task.status === 'completed' || task.status === 'failed') {
+      // 任务完成，停止轮询
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+      // 刷新数据
+      loadEndpoints()
+      loadStatistics()
+    }
+  } catch (error) {
+    console.error('查询任务状态失败:', error)
+  }
+}
+
 const confirmGenerate = async () => {
   generating.value = true
   try {
@@ -308,15 +384,26 @@ const confirmGenerate = async () => {
       skip_existing: generateForm.skip_existing
     })
     
-    MessagePlugin.success(res.message || '生成成功')
+    // 关闭生成对话框，显示任务进度对话框
     generateDialogVisible.value = false
-    loadEndpoints()
-    loadStatistics()
+    taskDialogVisible.value = true
+    currentTask.value = { status: 'pending', task_id: res.task_id }
+    
+    MessagePlugin.info('任务已创建，正在后台生成...')
+    
+    // 开始轮询任务状态
+    pollTimer = setInterval(() => pollTaskStatus(res.task_id), 2000)
+    
   } catch (error) {
-    console.error('生成测试用例失败:', error)
+    console.error('创建生成任务失败:', error)
   } finally {
     generating.value = false
   }
+}
+
+const closeTaskDialog = () => {
+  taskDialogVisible.value = false
+  currentTask.value = null
 }
 
 // 获取方法主题
@@ -398,5 +485,45 @@ const getMethodTheme = (method: string) => {
 
 .no-tags {
   color: rgba(0, 0, 0, 0.2);
+}
+
+.task-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.task-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.task-icon.success {
+  color: #52c41a;
+}
+
+.task-icon.error {
+  color: #ff4d4f;
+}
+
+.task-status {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.task-detail {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 14px;
+}
+
+.task-detail p {
+  margin: 4px 0;
+}
+
+.error-msg {
+  color: #ff4d4f;
 }
 </style>
