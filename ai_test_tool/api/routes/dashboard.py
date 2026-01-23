@@ -56,7 +56,7 @@ async def get_dashboard_stats():
     # 统计有测试用例覆盖的接口数量（通过 case_id 前缀匹配 endpoint_id）
     covered_result = db.fetch_one("""
         SELECT COUNT(*) as cnt FROM api_endpoints e
-        WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE CONCAT(e.endpoint_id, '%'))
+        WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE (e.endpoint_id || '%'))
     """)
     covered_endpoints = covered_result['cnt'] if covered_result else 0
     
@@ -86,7 +86,7 @@ async def get_dashboard_stats():
             SUM(JSON_EXTRACT(statistics, '$.critical_count')) as critical_count
         FROM analysis_reports
         WHERE report_type = 'anomaly' 
-        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        AND created_at >= datetime('now', '-7 days')
     """)
     
     # 5. AI 洞察
@@ -150,7 +150,7 @@ async def get_recent_activities(limit: int = Query(default=10, ge=1, le=50)):
         SELECT 
             'execution' as type,
             execution_id as id,
-            CONCAT('执行测试场景') as title,
+            '执行测试场景' as title,
             status,
             created_at
         FROM scenario_executions
@@ -172,7 +172,7 @@ async def get_recent_activities(limit: int = Query(default=10, ge=1, le=50)):
         SELECT 
             'health_check' as type,
             execution_id as id,
-            CONCAT('健康检查 - ', status) as title,
+            ('健康检查 - ' || status) as title,
             status,
             healthy_count,
             unhealthy_count,
@@ -265,7 +265,7 @@ async def get_dashboard_insights(limit: int = Query(default=5, ge=1, le=20)):
         FROM ai_insights
         WHERE is_resolved = 0
         ORDER BY 
-            FIELD(severity, 'high', 'medium', 'low'),
+            CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
             created_at DESC
         LIMIT %s
     """, (limit,))
@@ -346,7 +346,7 @@ async def get_coverage_trend(days: int = Query(default=7, ge=1, le=30)):
             DATE(created_at) as date,
             COUNT(*) as new_cases
         FROM test_cases
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+        WHERE created_at >= datetime('now', '-' || %s || ' days')
         GROUP BY DATE(created_at)
         ORDER BY date
     """
@@ -373,7 +373,7 @@ async def get_health_trend(days: int = Query(default=7, ge=1, le=30)):
             SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success,
             AVG(response_time_ms) as avg_time
         FROM health_check_results
-        WHERE checked_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+        WHERE checked_at >= datetime('now', '-' || %s || ' days')
         GROUP BY DATE(checked_at)
         ORDER BY date
     """
@@ -407,7 +407,7 @@ async def get_anomaly_trend(days: int = Query(default=7, ge=1, le=30)):
             SUM(JSON_EXTRACT(statistics, '$.warning_count')) as warning
         FROM analysis_reports
         WHERE report_type = 'anomaly' 
-        AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+        AND created_at >= datetime('now', '-' || %s || ' days')
         GROUP BY DATE(created_at)
         ORDER BY date
     """

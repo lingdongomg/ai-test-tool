@@ -6,6 +6,8 @@
 from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import uuid
@@ -21,6 +23,9 @@ from ...utils.logger import get_logger
 
 router = APIRouter()
 logger = get_logger()
+
+# 创建线程池用于执行阻塞操作，避免阻塞主事件循环
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="insights_worker")
 
 
 # ==================== 请求/响应模型 ====================
@@ -200,19 +205,20 @@ async def analyze_log(request: AnalyzeLogRequest, background_tasks: BackgroundTa
     }
 
 
-async def _analyze_log_task(
+def _analyze_log_task_sync(
     task_id: str, 
     file_path: str, 
     detect_types: list[str] | None,
     include_ai_analysis: bool
 ):
-    """后台分析任务"""
+    """后台分析任务 - 同步版本，在线程池中执行"""
+    import traceback
     db = get_db_manager()
     
     try:
         # 更新状态为运行中
         db.execute(
-            "UPDATE analysis_tasks SET status = 'running' WHERE task_id = %s",
+            "UPDATE analysis_tasks SET status = 'running', started_at = datetime('now') WHERE task_id = %s",
             (task_id,)
         )
         
@@ -227,32 +233,53 @@ async def _analyze_log_task(
         # 更新状态为完成
         db.execute("""
             UPDATE analysis_tasks 
-            SET status = 'completed', completed_at = NOW()
+            SET status = 'completed', completed_at = datetime('now')
             WHERE task_id = %s
         """, (task_id,))
         
     except Exception as e:
-        logger.error(f"分析任务失败: {e}")
+        # 记录详细错误信息，包含堆栈追踪
+        error_detail = f"{type(e).__name__}: {str(e)}\n\n堆栈追踪:\n{traceback.format_exc()}"
+        logger.error(f"分析任务失败 [{task_id}]: {error_detail}")
         db.execute("""
             UPDATE analysis_tasks 
-            SET status = 'failed', error_message = %s
+            SET status = 'failed', error_message = %s, completed_at = datetime('now')
             WHERE task_id = %s
-        """, (str(e), task_id))
+        """, (error_detail, task_id))
 
 
-async def _parse_requests_task(
+async def _analyze_log_task(
+    task_id: str, 
+    file_path: str, 
+    detect_types: list[str] | None,
+    include_ai_analysis: bool
+):
+    """后台分析任务 - 在线程池中执行，避免阻塞主事件循环"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        _executor,
+        _analyze_log_task_sync,
+        task_id,
+        file_path,
+        detect_types,
+        include_ai_analysis
+    )
+
+
+def _parse_requests_task_sync(
     task_id: str,
     file_path: str,
     max_lines: int | None
 ):
-    """后台解析请求任务 - 将日志中的HTTP请求提取出来"""
+    """后台解析请求任务 - 同步版本，在线程池中执行"""
+    import traceback as tb
     db = get_db_manager()
     task_logger = get_logger(verbose=True)
     
     try:
         # 更新状态为运行中
         db.execute(
-            "UPDATE analysis_tasks SET status = 'running', started_at = NOW() WHERE task_id = %s",
+            "UPDATE analysis_tasks SET status = 'running', started_at = datetime('now') WHERE task_id = %s",
             (task_id,)
         )
         
@@ -290,9 +317,9 @@ async def _parse_requests_task(
                     method=req.method,
                     url=req.url,
                     category=req.category,
-                    headers=json.dumps(req.headers, ensure_ascii=False) if req.headers else None,
+                    headers=req.headers or {},
                     body=req.body,
-                    query_params=json.dumps(req.query_params, ensure_ascii=False) if req.query_params else None,
+                    query_params=req.query_params or {},
                     http_status=req.http_status,
                     response_time_ms=req.response_time_ms,
                     response_body=req.response_body,
@@ -302,8 +329,8 @@ async def _parse_requests_task(
                     warning_message=req.warning_message,
                     curl_command=req.curl_command,
                     timestamp=req.timestamp,
-                    raw_logs='\n'.join(req.raw_logs) if req.raw_logs else None,
-                    metadata=json.dumps(req.metadata, ensure_ascii=False) if req.metadata else None
+                    raw_logs='\n'.join(req.raw_logs) if req.raw_logs else '',
+                    metadata=req.metadata or {}
                 )
                 records.append(record)
             
@@ -323,21 +350,37 @@ async def _parse_requests_task(
             UPDATE analysis_tasks 
             SET status = 'completed', 
                 total_requests = %s,
-                completed_at = NOW()
+                completed_at = datetime('now')
             WHERE task_id = %s
         """, (total_requests, task_id))
         
         task_logger.info(f"请求解析完成: 共提取 {total_requests} 个请求")
         
     except Exception as e:
-        logger.error(f"请求解析任务失败: {e}")
-        import traceback
-        traceback.print_exc()
+        # 记录详细错误信息，包含堆栈追踪
+        error_detail = f"{type(e).__name__}: {str(e)}\n\n堆栈追踪:\n{tb.format_exc()}"
+        logger.error(f"请求解析任务失败 [{task_id}]: {error_detail}")
         db.execute("""
             UPDATE analysis_tasks 
-            SET status = 'failed', error_message = %s
+            SET status = 'failed', error_message = %s, completed_at = datetime('now')
             WHERE task_id = %s
-        """, (str(e), task_id))
+        """, (error_detail, task_id))
+
+
+async def _parse_requests_task(
+    task_id: str,
+    file_path: str,
+    max_lines: int | None
+):
+    """后台解析请求任务 - 在线程池中执行，避免阻塞主事件循环"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        _executor,
+        _parse_requests_task_sync,
+        task_id,
+        file_path,
+        max_lines
+    )
 
 
 # ==================== 分析任务管理 ====================
@@ -592,7 +635,7 @@ async def get_anomaly_trends(days: int = Query(default=7, ge=1, le=30)):
             JSON_EXTRACT(statistics, '$.total_anomalies') as total
         FROM analysis_reports
         WHERE report_type = 'anomaly' 
-        AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+        AND created_at >= datetime('now', '-' || %s || ' days')
         ORDER BY date
     """
     rows = db.fetch_all(sql, (days,))
@@ -646,7 +689,7 @@ async def get_insights_statistics():
             COUNT(*) as tasks_today,
             SUM(JSON_EXTRACT(statistics, '$.total_anomalies')) as anomalies_today
         FROM analysis_reports
-        WHERE report_type = 'anomaly' AND DATE(created_at) = CURDATE()
+        WHERE report_type = 'anomaly' AND DATE(created_at) = DATE('now')
     """)
     
     return {

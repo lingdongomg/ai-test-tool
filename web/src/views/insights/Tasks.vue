@@ -34,6 +34,11 @@
           <t-tag :theme="getStatusTheme(row.status)">
             {{ getStatusLabel(row.status) }}
           </t-tag>
+          <t-tooltip v-if="row.status === 'failed' && row.error_message" :content="getErrorSummary(row.error_message)">
+            <t-link theme="danger" style="margin-left: 4px; font-size: 12px;" @click="showErrorDetail(row)">
+              查看原因
+            </t-link>
+          </t-tooltip>
         </template>
         <template #total_requests="{ row }">
           {{ row.total_requests || '-' }}
@@ -84,6 +89,19 @@
         </t-form-item>
       </t-form>
     </t-dialog>
+
+    <!-- 错误详情对话框 -->
+    <t-dialog
+      v-model:visible="errorDialogVisible"
+      header="任务失败详情"
+      width="700px"
+      :footer="false"
+    >
+      <t-alert theme="error" :message="errorDialogTask?.name || '任务失败'" style="margin-bottom: 16px;" />
+      <div class="error-detail-content">
+        <pre>{{ errorDialogTask?.error_message || '未知错误' }}</pre>
+      </div>
+    </t-dialog>
   </div>
 </template>
 
@@ -116,6 +134,10 @@ const extractForm = reactive({
   max_requests_per_endpoint: 5,
   tags_str: ''
 })
+
+// 错误详情对话框
+const errorDialogVisible = ref(false)
+const errorDialogTask = ref<any>(null)
 
 // 表格列
 const columns = [
@@ -237,6 +259,19 @@ const formatFileSize = (size: number) => {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
+
+// 错误摘要（截取第一行）
+const getErrorSummary = (error: string) => {
+  if (!error) return '未知错误'
+  const firstLine = error.split('\n')[0]
+  return firstLine.length > 50 ? firstLine.substring(0, 50) + '...' : firstLine
+}
+
+// 显示错误详情
+const showErrorDetail = (row: any) => {
+  errorDialogTask.value = row
+  errorDialogVisible.value = true
+}
 </script>
 
 <style scoped>
@@ -247,5 +282,22 @@ const formatFileSize = (size: number) => {
 .task-name {
   display: flex;
   align-items: center;
+}
+
+.error-detail-content {
+  background: #f5f5f5;
+  border-radius: 4px;
+  padding: 16px;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.error-detail-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
 }
 </style>

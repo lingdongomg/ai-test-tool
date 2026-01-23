@@ -299,7 +299,7 @@ class AIAssistantService:
                 FROM test_results tr
                 JOIN test_cases tc ON tr.case_id = tc.case_id
                 WHERE tc.case_id LIKE %s
-                AND tr.executed_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                AND tr.executed_at >= datetime('now', '-' || %s || ' days')
                 ORDER BY tr.executed_at
             """
             results = self.db.fetch_all(sql, (f"{endpoint_id}%", days))
@@ -309,7 +309,7 @@ class AIAssistantService:
                        tr.status, tr.executed_at
                 FROM test_results tr
                 JOIN test_cases tc ON tr.case_id = tc.case_id
-                WHERE tr.executed_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                WHERE tr.executed_at >= datetime('now', '-' || %s || ' days')
                 ORDER BY tr.executed_at
             """
             results = self.db.fetch_all(sql, (days,))
@@ -466,7 +466,7 @@ class AIAssistantService:
             SELECT e.endpoint_id, e.method, e.path, e.name
             FROM api_endpoints e
             WHERE NOT EXISTS (
-                SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE CONCAT(e.endpoint_id, '%')
+                SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE (e.endpoint_id || '%')
             )
             ORDER BY e.path
         """
@@ -506,7 +506,7 @@ class AIAssistantService:
                    SUM(CASE WHEN tr.status IN ('failed', 'error') THEN 1 ELSE 0 END) as failures
             FROM test_results tr
             JOIN test_cases tc ON tr.case_id = tc.case_id
-            WHERE tr.executed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE tr.executed_at >= datetime('now', '-7 days')
             GROUP BY tc.case_id, tc.method, tc.url
             HAVING failures > 0
             ORDER BY failures / total DESC
@@ -547,11 +547,11 @@ class AIAssistantService:
         sql = """
             SELECT e.endpoint_id, e.method, e.path, e.name, e.updated_at
             FROM api_endpoints e
-            WHERE e.updated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE e.updated_at >= datetime('now', '-7 days')
             AND NOT EXISTS (
                 SELECT 1 FROM test_cases tc 
                 JOIN test_results tr ON tc.case_id = tr.case_id
-                WHERE tc.case_id LIKE CONCAT(e.endpoint_id, '%')
+                WHERE tc.case_id LIKE (e.endpoint_id || '%')
                 AND tr.executed_at >= e.updated_at
             )
             ORDER BY e.updated_at DESC
@@ -795,7 +795,7 @@ class AIAssistantService:
         # 最近7天执行数
         result = self.db.fetch_one("""
             SELECT COUNT(*) as count FROM test_results
-            WHERE executed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE executed_at >= datetime('now', '-7 days')
         """)
         stats['recent_executions'] = result['count'] if result else 0
         
@@ -805,7 +805,7 @@ class AIAssistantService:
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed
             FROM test_results
-            WHERE executed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE executed_at >= datetime('now', '-7 days')
         """)
         if result and result['total'] > 0:
             stats['avg_success_rate'] = result['passed'] / result['total']

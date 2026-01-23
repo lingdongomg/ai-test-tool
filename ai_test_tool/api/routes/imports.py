@@ -460,7 +460,7 @@ def _update_endpoint(db, endpoint, source_file: str) -> None:
             name = %s, description = %s, summary = %s,
             parameters = %s, request_body = %s, responses = %s,
             source_type = %s, source_file = %s, is_deprecated = %s,
-            updated_at = NOW()
+            updated_at = datetime('now')
         WHERE endpoint_id = %s
     """
     # 截断过长字段
@@ -492,7 +492,7 @@ def _save_endpoint_tags(db, endpoint_id: str, tags: list[str]) -> None:
         tag = db.fetch_one("SELECT id FROM api_tags WHERE name = %s", (tag_name,))
         if tag:
             db.execute(
-                "INSERT IGNORE INTO api_endpoint_tags (endpoint_id, tag_id) VALUES (%s, %s)",
+                "INSERT OR IGNORE INTO api_endpoint_tags (endpoint_id, tag_id) VALUES (%s, %s)",
                 (endpoint_id, tag['id'])
             )
 

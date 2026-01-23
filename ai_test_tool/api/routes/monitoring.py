@@ -219,7 +219,7 @@ async def update_monitor_request(request_id: str, request: AddMonitorRequest):
             expected_status_code = %s,
             expected_response_pattern = %s,
             tags = %s,
-            updated_at = NOW()
+            updated_at = datetime('now')
         WHERE request_id = %s
     """
     
@@ -411,7 +411,7 @@ async def get_monitoring_statistics():
             SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
             AVG(response_time_ms) as avg_response_time
         FROM health_check_results
-        WHERE DATE(checked_at) = CURDATE()
+        WHERE DATE(checked_at) = DATE('now')
     """)
     
     # 近7天趋势
@@ -422,7 +422,7 @@ async def get_monitoring_statistics():
             SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success,
             AVG(response_time_ms) as avg_time
         FROM health_check_results
-        WHERE checked_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        WHERE checked_at >= datetime('now', '-7 days')
         GROUP BY DATE(checked_at)
         ORDER BY date
     """
@@ -537,7 +537,7 @@ async def resolve_alert(alert_id: str):
     
     sql = """
         UPDATE ai_insights 
-        SET is_resolved = 1, resolved_at = NOW() 
+        SET is_resolved = 1, resolved_at = datetime('now') 
         WHERE insight_id = %s
     """
     affected = db.execute(sql, (alert_id,))

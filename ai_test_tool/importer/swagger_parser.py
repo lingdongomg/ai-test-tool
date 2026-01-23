@@ -48,7 +48,7 @@ class SwaggerParser:
     
     def _parse_swagger_2(self, data: dict[str, Any]) -> None:
         """解析 Swagger 2.0 格式"""
-        base_path = data.get('basePath', '')
+        base_path = data.get('basePath', '').rstrip('/')  # 移除尾部斜杠
         paths = data.get('paths', {})
         
         # 解析全局标签
@@ -56,7 +56,13 @@ class SwaggerParser:
             self.tags.add(tag.get('name', ''))
         
         for path, methods in paths.items():
-            full_path = f"{base_path}{path}" if base_path else path
+            # 规范化路径：确保 path 以 / 开头，避免双斜杠
+            normalized_path = path if path.startswith('/') else f"/{path}"
+            # 如果 basePath 只是 "/" 则忽略，避免 //path 的情况
+            if base_path and base_path != '/':
+                full_path = f"{base_path}{normalized_path}"
+            else:
+                full_path = normalized_path
             
             for method, spec in methods.items():
                 if method.lower() in ['get', 'post', 'put', 'delete', 'patch', 'head', 'options']:

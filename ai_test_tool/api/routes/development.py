@@ -123,7 +123,7 @@ async def list_endpoints(
     sql = f"""
         SELECT 
             e.*,
-            COALESCE((SELECT COUNT(*) FROM test_cases WHERE case_id LIKE CONCAT(e.endpoint_id, '%%')), 0) as test_case_count,
+            COALESCE((SELECT COUNT(*) FROM test_cases WHERE case_id LIKE (e.endpoint_id || '%')), 0) as test_case_count,
             (SELECT GROUP_CONCAT(t.name) FROM api_tags t 
              JOIN api_endpoint_tags et ON t.id = et.tag_id 
              WHERE et.endpoint_id = e.endpoint_id) as tag_names
@@ -222,7 +222,7 @@ def _run_generate_task(task_id: str, request_data: dict):
         # 更新任务状态为运行中
         db.execute("""
             UPDATE test_generation_tasks 
-            SET status = 'running', started_at = NOW() 
+            SET status = 'running', started_at = datetime('now') 
             WHERE task_id = %s
         """, (task_id,))
         
@@ -248,7 +248,7 @@ def _run_generate_task(task_id: str, request_data: dict):
                     processed_endpoints = 1,
                     success_count = 1,
                     total_cases_generated = %s,
-                    completed_at = NOW()
+                    completed_at = datetime('now')
                 WHERE task_id = %s
             """, (len(test_cases), task_id))
         else:
@@ -270,7 +270,7 @@ def _run_generate_task(task_id: str, request_data: dict):
                     failed_count = %s,
                     total_cases_generated = %s,
                     errors = %s,
-                    completed_at = NOW()
+                    completed_at = datetime('now')
                 WHERE task_id = %s
             """, (
                 result['total_endpoints'],
@@ -288,7 +288,7 @@ def _run_generate_task(task_id: str, request_data: dict):
             UPDATE test_generation_tasks 
             SET status = 'failed', 
                 error_message = %s,
-                completed_at = NOW()
+                completed_at = datetime('now')
             WHERE task_id = %s
         """, (str(e), task_id))
 
@@ -979,7 +979,7 @@ async def get_development_statistics():
     # 统计有测试用例的接口数量（通过检查是否存在匹配的 case_id）
     covered_result = db.fetch_one("""
         SELECT COUNT(*) as cnt FROM api_endpoints e
-        WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE CONCAT(e.endpoint_id, '%'))
+        WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE (e.endpoint_id || '%'))
     """)
     coverage_stats = {
         'total_endpoints': total_endpoints_result['cnt'] if total_endpoints_result else 0,
@@ -993,7 +993,7 @@ async def get_development_statistics():
             SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed,
             SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
         FROM test_results
-        WHERE executed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        WHERE executed_at >= datetime('now', '-7 days')
     """)
     
     total_endpoints = coverage_stats['total_endpoints'] if coverage_stats else 0

@@ -1,6 +1,6 @@
 """
 数据库模块
-提供MySQL数据库连接和数据持久化功能
+提供 SQLite 数据库连接和数据持久化功能（开箱即用）
 """
 
 from .connection import DatabaseManager, get_db_manager

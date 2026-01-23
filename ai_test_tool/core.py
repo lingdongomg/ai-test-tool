@@ -204,7 +204,7 @@ class AITestTool:
                 # 更新 total_lines
                 db = get_db_manager()
                 db.execute(
-                    "UPDATE analysis_tasks SET total_lines = %s, started_at = NOW() WHERE task_id = %s",
+                    "UPDATE analysis_tasks SET total_lines = %s, started_at = datetime('now') WHERE task_id = %s",
                     (total_lines, self.task_id)
                 )
             except Exception as e:

@@ -303,7 +303,7 @@ async def list_insights(
         SELECT * FROM ai_insights
         {where_clause}
         ORDER BY 
-            FIELD(severity, 'high', 'medium', 'low'),
+            CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
             created_at DESC
         LIMIT %s OFFSET %s
     """
@@ -339,7 +339,7 @@ async def resolve_insight(insight_id: str):
     
     sql = """
         UPDATE ai_insights 
-        SET is_resolved = 1, resolved_at = NOW() 
+        SET is_resolved = 1, resolved_at = datetime('now') 
         WHERE insight_id = %s
     """
     affected = db.execute(sql, (insight_id,))

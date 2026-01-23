@@ -308,7 +308,7 @@ class TestCaseRepository(BaseRepository):
     
     def add_tag(self, task_id: str, case_id: str, tag_name: str) -> int:
         """添加标签"""
-        sql = "INSERT IGNORE INTO test_case_tags (task_id, case_id, tag_name) VALUES (%s, %s, %s)"
+        sql = "INSERT OR IGNORE INTO test_case_tags (task_id, case_id, tag_name) VALUES (%s, %s, %s)"
         return self.db.execute(sql, (task_id, case_id, tag_name))
     
     def remove_tag(self, task_id: str, case_id: str, tag_name: str) -> int:

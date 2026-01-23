@@ -426,7 +426,7 @@ class ProductionMonitorService:
         # 获取最近的执行记录
         sql = """
             SELECT * FROM health_check_executions
-            WHERE created_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+            WHERE created_at >= datetime('now', '-' || %s || ' days')
             ORDER BY created_at DESC
             LIMIT 100
         """
@@ -465,7 +465,7 @@ class ProductionMonitorService:
                    COUNT(hcr.id) as failure_count
             FROM production_requests pr
             LEFT JOIN health_check_results hcr ON pr.request_id = hcr.request_id AND hcr.success = 0
-            WHERE hcr.checked_at >= DATE_SUB(NOW(), INTERVAL %s DAY)
+            WHERE hcr.checked_at >= datetime('now', '-' || %s || ' days')
             GROUP BY pr.request_id
             ORDER BY failure_count DESC
             LIMIT 10
@@ -582,7 +582,7 @@ class ProductionMonitorService:
         sql = """
             INSERT INTO health_check_executions 
             (execution_id, base_url, total_requests, status, started_at)
-            VALUES (%s, %s, %s, %s, NOW())
+            VALUES (%s, %s, %s, %s, datetime('now'))
         """
         self.db.execute(sql, (execution_id, base_url, total, 'running'))
         
@@ -600,7 +600,7 @@ class ProductionMonitorService:
                 healthy_count = %s,
                 unhealthy_count = %s,
                 status = 'completed',
-                completed_at = NOW()
+                completed_at = datetime('now')
             WHERE execution_id = %s
         """
         self.db.execute(sql, (healthy_count, unhealthy_count, execution_id))
@@ -610,7 +610,7 @@ class ProductionMonitorService:
         if success:
             sql = """
                 UPDATE production_requests SET
-                    last_check_at = NOW(),
+                    last_check_at = datetime('now'),
                     last_check_status = 'healthy',
                     consecutive_failures = 0
                 WHERE request_id = %s
@@ -619,7 +619,7 @@ class ProductionMonitorService:
         else:
             sql = """
                 UPDATE production_requests SET
-                    last_check_at = NOW(),
+                    last_check_at = datetime('now'),
                     last_check_status = 'unhealthy',
                     consecutive_failures = consecutive_failures + 1
                 WHERE request_id = %s
@@ -642,7 +642,7 @@ class ProductionMonitorService:
             INSERT INTO health_check_results 
             (execution_id, request_id, success, status_code, response_time_ms,
              response_body, error_message, ai_analysis, checked_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, datetime('now'))
         """
         self.db.execute(sql, (
             execution_id,

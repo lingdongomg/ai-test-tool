@@ -27,9 +27,7 @@ aiohttp>=3.9.0
 # Progress Bar
 tqdm>=4.67.0
 
-# Database
-pymysql>=1.1.0
-DBUtils>=3.1.0
+# Database (SQLite - built-in, no external dependencies needed)
 
 # Web Framework (API Server)
 fastapi>=0.115.0

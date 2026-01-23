@@ -127,6 +127,9 @@ class ParsedRequestRecord:
         result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
         result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
         result['metadata'] = json.dumps(self.metadata, ensure_ascii=False) if self.metadata else '{}'
+        # body 可能是字典（来自AI解析），需要序列化为字符串
+        if isinstance(result['body'], dict):
+            result['body'] = json.dumps(result['body'], ensure_ascii=False)
         return result
     
     @classmethod

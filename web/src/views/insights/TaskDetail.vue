@@ -9,10 +9,21 @@
             {{ getStatusLabel(task.status) }}
           </t-tag>
         </t-descriptions-item>
-        <t-descriptions-item label="文件名">{{ task.file_name }}</t-descriptions-item>
-        <t-descriptions-item label="文件大小">{{ formatFileSize(task.file_size) }}</t-descriptions-item>
+        <t-descriptions-item label="文件大小">{{ formatFileSize(task.log_file_size) }}</t-descriptions-item>
+        <t-descriptions-item label="总行数">{{ task.total_lines || '-' }}</t-descriptions-item>
+        <t-descriptions-item label="解析请求数">{{ task.total_requests || '-' }}</t-descriptions-item>
         <t-descriptions-item label="创建时间">{{ task.created_at }}</t-descriptions-item>
+        <t-descriptions-item label="开始时间">{{ task.started_at || '-' }}</t-descriptions-item>
+        <t-descriptions-item label="完成时间">{{ task.completed_at || '-' }}</t-descriptions-item>
       </t-descriptions>
+    </t-card>
+
+    <!-- 失败原因 -->
+    <t-card v-if="task.status === 'failed'" title="失败原因" style="margin-top: 16px;">
+      <t-alert theme="error" :message="getErrorTitle(task.error_message)" style="margin-bottom: 16px;" />
+      <div class="error-detail-box">
+        <pre>{{ task.error_message || '未知错误，请查看服务器日志' }}</pre>
+      </div>
     </t-card>
 
     <t-card title="分析报告" style="margin-top: 16px;">
@@ -101,10 +112,35 @@ const formatFileSize = (size: number) => {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
+
+const getErrorTitle = (error: string) => {
+  if (!error) return '任务执行失败'
+  const firstLine = error.split('\n')[0]
+  return firstLine || '任务执行失败'
+}
 </script>
 
 <style scoped>
 .task-detail {
   max-width: 1000px;
+}
+
+.error-detail-box {
+  background: #fef0f0;
+  border: 1px solid #fde2e2;
+  border-radius: 4px;
+  padding: 16px;
+  max-height: 400px;
+  overflow: auto;
+}
+
+.error-detail-box pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c45656;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
 }
 </style>
