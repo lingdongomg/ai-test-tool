@@ -508,3 +508,256 @@ TEST_CASE_GENERATION_WITH_RAG_PROMPT = """你是一位资深的测试工程师�
 ```
 
 请直接输出JSON："""
+
+
+# 场景分类Prompt - 用于智能路由分发器
+SCENARIO_CLASSIFICATION_PROMPT = """你是一位日志分析专家，请根据以下日志内容和统计信息，判断最适合的分析场景。
+
+## 日志内容摘要
+```
+{log_summary}
+```
+
+## 统计信息
+```json
+{statistics}
+```
+
+## 用户提示
+{user_hint}
+
+## 可选场景类型
+- error_analysis: 错误分析 - 适用于有明显错误、异常、失败的情况
+- performance: 性能分析 - 适用于有响应时间问题、慢请求、超时的情况
+- security: 安全分析 - 适用于有安全威胁、攻击尝试、认证问题的情况
+- business: 业务分析 - 适用于分析业务流程、用户行为的情况
+- anomaly: 异常检测 - 适用于需要检测异常模式、突变的情况
+- api_coverage: API覆盖率 - 适用于分析接口调用覆盖情况
+- traffic: 流量分析 - 适用于分析请求量、流量分布的情况
+- root_cause: 根因分析 - 适用于需要深入定位问题根本原因的情况
+- health_check: 健康检查 - 适用于评估服务整体健康状态
+
+## 输出要求
+请根据日志内容判断最适合的分析场景，可以选择多个场景。
+
+**重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容。**
+
+```json
+{{
+  "scenarios": [
+    {{
+      "type": "场景类型",
+      "confidence": 0.0-1.0之间的置信度,
+      "reason": "选择该场景的原因"
+    }}
+  ],
+  "primary_scenario": "最主要的场景类型",
+  "analysis_suggestion": "分析建议"
+}}
+```
+
+请输出JSON："""
+
+
+# 根因分析Prompt - 用于智能根因定位
+ROOT_CAUSE_ANALYSIS_PROMPT = """你是一位资深的系统诊断专家，请根据以下错误信息进行根因分析。
+
+## 错误摘要
+```json
+{error_summary}
+```
+
+## 相关日志
+```
+{related_logs}
+```
+
+## 系统上下文
+```json
+{system_context}
+```
+
+## 分析要求
+1. 识别问题的根本原因（不仅仅是表象）
+2. 分析错误的传播路径
+3. 评估影响范围
+4. 提供具体的解决方案
+
+## 输出格式
+**重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容。**
+
+```json
+{{
+  "root_cause": {{
+    "summary": "根本原因的简要描述",
+    "category": "错误类别（如：配置错误/代码bug/资源不足/依赖故障/网络问题）",
+    "confidence": 0.0-1.0之间的置信度,
+    "evidence": ["支持该结论的证据"]
+  }},
+  "error_chain": [
+    {{
+      "step": 1,
+      "description": "错误发生的步骤描述",
+      "component": "涉及的组件"
+    }}
+  ],
+  "impact": {{
+    "scope": "影响范围（如：单个接口/整个服务/多个服务）",
+    "severity": "high/medium/low",
+    "affected_users": "受影响用户估计"
+  }},
+  "solutions": [
+    {{
+      "action": "解决方案描述",
+      "priority": "immediate/short-term/long-term",
+      "effort": "low/medium/high"
+    }}
+  ],
+  "prevention": ["预防措施建议"]
+}}
+```
+
+请输出JSON："""
+
+
+# 异常模式检测Prompt
+ANOMALY_DETECTION_PROMPT = """你是一位数据分析专家，请分析以下时序数据，检测异常模式。
+
+## 时序数据
+```json
+{time_series_data}
+```
+
+## 基线统计
+```json
+{baseline_stats}
+```
+
+## 检测要求
+1. 识别数据中的异常点
+2. 判断异常类型（突增、突降、周期性异常等）
+3. 评估异常的严重程度
+4. 分析可能的原因
+
+## 输出格式
+```json
+{{
+  "anomalies": [
+    {{
+      "timestamp": "异常发生时间",
+      "metric": "异常指标名称",
+      "type": "spike/drop/pattern/outlier",
+      "value": "异常值",
+      "expected": "期望值",
+      "deviation": "偏离程度",
+      "severity": "high/medium/low"
+    }}
+  ],
+  "patterns": [
+    {{
+      "type": "模式类型",
+      "description": "模式描述",
+      "period": "周期（如适用）"
+    }}
+  ],
+  "overall_status": "normal/warning/critical",
+  "recommendations": ["处理建议"]
+}}
+```
+
+请输出JSON："""
+# 该文件内容使用AI生成，注意识别准确性
+KNOWLEDGE_EXTRACTION_PROMPT = """你是一个API测试知识提取专家。请分析以下信息，提取可以帮助生成更好测试用例的知识。
+
+## 分析内容
+{content}
+
+## 知识类型说明
+- project_config: 项目配置知识（如认证方式、环境变量、通用header参数）
+- business_rule: 业务规则知识（如特定模块的参数要求、业务逻辑约束）
+- module_context: 模块上下文知识（如模块功能描述、依赖关系）
+- test_experience: 测试经验知识（如常见错误、边界情况、最佳实践）
+
+## 输出要求
+请提取有价值的知识，以JSON数组格式输出，每条知识包含：
+- title: 知识标题（简洁明了）
+- content: 知识内容（详细描述，包含具体的配置值或规则）
+- type: 知识类型（从上述4种中选择）
+- category: 子分类（可选）
+- scope: 适用范围（如接口路径 /api/live/*）
+- tags: 标签数组（用于分类检索）
+- confidence: 置信度（0-1，表示这条知识的可靠程度）
+- reason: 提取原因（为什么这是有价值的知识）
+
+## 注意事项
+1. 只提取对测试用例生成有帮助的知识
+2. 具体的配置值、参数名称要准确
+3. 如果没有发现有价值的知识，返回空数组 []
+4. 避免提取过于通用或显而易见的知识
+
+请直接输出JSON数组："""
+
+
+# 带知识库增强的测试用例生成Prompt
+TEST_CASE_GENERATION_WITH_KNOWLEDGE_PROMPT = """你是一位资深的测试工程师，请根据以下信息生成测试用例。
+
+## 项目知识库
+{knowledge_context}
+
+## API信息
+```json
+{api_info}
+```
+
+## 样例请求
+```json
+{sample_requests}
+```
+
+## 测试策略
+{test_strategy}
+
+## 输出要求
+请生成覆盖以下场景的测试用例：
+1. **正常场景**：基于样例请求的正常流程测试
+2. **边界测试**：参数边界值测试
+3. **异常测试**：错误参数、权限问题等异常场景
+4. **安全测试**：SQL注入、XSS等安全相关测试
+
+**重要**：
+- 请严格按照知识库中的规则配置header参数（如认证token、game-id等）
+- 确保测试用例符合知识库中描述的业务规则
+- 参考知识库中的测试经验，避免已知的常见问题
+
+## 输出格式
+```json
+{{
+  "test_cases": [
+    {{
+      "name": "测试用例名称",
+      "description": "测试描述",
+      "category": "normal/boundary/exception/security",
+      "priority": "high/medium/low",
+      "method": "HTTP方法",
+      "url": "请求URL",
+      "headers": {{"header名": "header值"}},
+      "body": {{"字段名": "字段值"}},
+      "query_params": {{"参数名": "参数值"}},
+      "expected_status": 200,
+      "assertions": [
+        {{
+          "type": "status_code/json_path/contains",
+          "target": "验证目标",
+          "operator": "eq/ne/gt/lt/contains",
+          "expected": "期望值"
+        }}
+      ],
+      "knowledge_applied": ["应用的知识标题列表"]
+    }}
+  ],
+  "coverage_notes": "测试覆盖说明",
+  "knowledge_notes": "知识应用说明"
+}}
+```
+
+请直接输出JSON："""

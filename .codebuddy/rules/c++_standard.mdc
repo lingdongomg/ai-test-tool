@@ -1,0 +1,656 @@
+---
+globs: *.cpp,*.c,*.hpp,*.h
+alwaysApply: false
+description: c++编码规范
+---
+## 1. C++版本
+
+代码应针对 C++ 17，不应该使用 C++ 2a 功能。
+
+不要使用[非标准扩展](#features.nonstandard_extensions)。
+
+---
+## 2. 头文件
+
+<a id="header.self-contained"></a>
+### 2.1.【必须】Self-contained 头文件
+
+头文件应该是自给自足（ self-contained，可自编译），以 `.h` 结尾。禁止分离出 `-inl.h` 头文件的做法。
+
+<a id="header.guard"></a>
+### 2.2.【必须】 头文件保护
+
+所有头文件都应该使用 `#define` 或 `#pragma once` 来防止头文件被多重包含。其中`#define`的命名格式当是： `<PROJECT>_<PATH>_<FILE>_H_`。
+
+```cpp
+#pragma once
+...
+```
+
+`#define` 方式中为保证唯一性，其头文件的命名应该基于所在项目源代码树的全路径。例如，项目 `foo` 中的头文件 `foo/src/bar/baz.h` 可按如下方式保护：
+
+```cpp
+#ifndef FOO_BAR_BAZ_H_
+#define FOO_BAR_BAZ_H_
+...
+#endif // FOO_BAR_BAZ_H_
+```
+
+<a id="header.forward_declarations"></a>
+### 2.3.【推荐】避免使用前置声明
+
+尽可能地避免使用前置声明。使用 `#include` 包含需要的头文件。
+
+<a id="header.inline_function" ></a>
+### 2.4.【推荐】内联函数
+
+只有当函数只有 10 行甚至更少时才将其定义为内联函数。
+
+<a id="header.include_order"></a>
+### 2.5.【必须】`#include` 的路径及顺序
+
+使用标准的头文件包含顺序可增强可读性，避免隐藏依赖：`相关头文件`、`C 库`、`C++ 库`、`其他库的 .h`、`本项目内的 .h`。
+
+项目内头文件应按照项目源代码目录树结构排列，避免使用 UNIX 特殊的快捷目录`.` (当前目录) 或 `..` (上级目录)。例如，`our-awesome-project/src/base/logging.h` 应该按如下方式包含：
+
+```cpp
+#include "base/logging.h"
+```
+
+1. dir2/foo2.h（优先位置，详情如下）
+2. 空行
+3. C 系统头文件
+4. 空行
+5. C++ 标准库头文件
+6. 空行
+7. 其他库的 `.h`文件
+8. （可选）空行
+9. 本项目内 `.h`文件
+
+**[返回目录](#top)**
+
+---
+<a id="scoping"></a>
+## 3. 作用域
+
+<a id="scoping.namespace"></a>
+### 3.1.【必须】命名空间
+
+除了少数例外，代码应该处在命名空间中。命名空间的名称应当基于项目名或相对路径。
+不要在头文件的全局作用域使用 `using` 指令（也就是 `using namespace foo`）。
+禁止使用内联命名空间（inline namespace）。
+推荐在源文件内使用匿名命名空间或 `static` 声明，参见下一条规范。
+
+<a id="scoping.unamed_namespace"></a>
+### 3.2.【必须】匿名命名空间和静态变量
+
+在源文件中定义一个不需要被外部引用的变量时，可以将它们放在匿名命名空间或声明为 `static` 。但是不要在头文件中这么做。
+
+<a id="scoping.nonmember_function"></a>
+### 3.3.【必须】非成员函数、静态成员函数和全局函数
+
+使用静态成员函数或命名空间内的非成员函数，尽量不要用裸的全局函数。
+将一系列函数直接置于命名空间中，不要用类的静态方法模拟出命名空间的效果，类的静态方法应当和类的实例或静态数据紧密相关。
+
+<a id="scoping.local_variable"></a>
+### 3.4.【推荐】局部变量
+
+将函数变量尽可能置于最小作用域内，并在变量声明时进行初始化。
+
+<a id="scoping.static_variable"></a>
+
+### 3.5.【必须】静态和全局变量
+
+禁止使用具有[静态存储期](http://zh.cppreference.com/w/cpp/language/storage_duration#.E5.AD.98.E5.82.A8.E6.9C.9F)的对象，除非它们是[可平凡析构](https://zh.cppreference.com/w/cpp/language/destructor#.E5.B9.B3.E5.87.A1.E6.9E.90.E6.9E.84.E5.87.BD.E6.95.B0)的。
+
+函数内的静态局部变量可以使用动态初始化。不鼓励使用动态初始化的静态类成员变量或命名空间范围内的变量，但在有限的情况下允许使用，详情请参见下文描述。
+
+<a id="scoping.thread_local"></a>
+### 3.6.【必须】`thread_local` 变量
+
+非函数内定义的 `thread_local` 变量必须初始化为编译时常量。
+相比于其他用于定义线程本地数据的机制，应该优先使用 `thread_local`。
+
+**[返回目录](#top)**
+
+---
+<a id="classes"></a>
+## 4. 类
+
+<a id="classes.constructor"></a>
+### 4.1.【必须】构造函数的职责
+
+不要在构造函数中调用虚函数，也不要在无法报出错误时进行可能失败的初始化。
+
+<a id="classes.implicit_conversions"></a>
+### 4.2.【必须】隐式类型转换
+
+不要定义隐式类型转换。对于转换运算符和单参数构造函数，请使用 `explicit` 关键字。
+
+<a id="classes.copyable_movable"></a>
+### 4.3.【必须】可拷贝类型和可移动类型
+
+如果需要，就让你的类型支持拷贝/移动。否则，把隐式产生的拷贝和移动函数禁用。
+
+<a id="classes.structs_classes"></a>
+### 4.4.【必须】结构体 VS. 类
+
+<a id="classes.inheritance"></a>
+### 4.5.【必须】继承
+
+<a id="classes.structs_pair_tuple"></a>
+### 4.6 【必须】结构体，Pair 和 Tuple
+
+如果可以给字段取有意义的名字，应该优先使用结构体，其次才是 pair 和 tuple。
+
+<a id="classes.opetator_overloading"></a>
+### 4.7.【必须】运算符重载
+
+除少数特定环境外，不要重载运算符。也不要创建用户定义字面量。
+
+<a id="classes.access_control"></a>
+### 4.8.【必须】存取控制
+
+出于技术原因，我们允许在使用 [Google Test](https://github.com/google/googletest)时，我们允许测试固件类中的数据成员为 `protected`。
+
+<a id="classes.declaration_order"></a>
+### 4.9.【必须】声明顺序
+
+**[返回目录](#top)**
+
+---
+<a id="functions"></a>
+## 5. 函数
+
+<a id="functions.inputs_and_outputs"></a>
+### 5.1.【推荐】输入和输出
+
+推荐优先使用返回值作为函数输出。函数的参数列表排序为：输入参数在前，输出参数在后。
+
+<a id="functions.short_functions"></a>
+### 5.2.【推荐】编写简短函数
+
+推荐编写简短且内聚的函数。
+
+<a id="functions.function_overloading"></a>
+### 5.3.【必须】函数重载
+
+若要使用函数（包括构造函数）重载，则必须让读者一看调用点就了然于心，而不必花心思查找调用的重载函数到底是哪一个。
+
+<a id="functions.default_arguments"></a>
+### 5.4.【推荐】缺省参数
+
+只允许在非虚函数中使用缺省参数，且必须保证缺省参数的值始终一致。[函数重载](#functions.function_overloading)所遵循的规则，同样适用于`缺省参数`。一般情况下都建议使用函数重载，特别是当使用了缺省参数后，对代码可读性的提升，还不能弥补由此引入的缺点的情况下。
+
+<a id="functions.trailing_return_type_syntax"></a>
+### 5.5.【可选】返回类型后置语法
+
+**[返回目录](#top)**
+
+---
+<a id="features"></a>
+## 6. 其他 C++ 特性
+
+<a id="features.rvalue_references"></a>
+### 6.1.【推荐】右值引用
+
+<a id="features.friends"></a>
+### 6.2.【必须】友元
+
+我们允许合理的使用友元类及友元函数。
+
+<a id="features.exceptions"></a>
+### 6.3.【必须】异常
+
+根据项目特点和团队能力决定是否使用 C++ 异常，但必须保持一致。对于不用异常的现存项目，不要引入异常。使用异常时要遵循业界最佳实践，确保异常安全。
+
+<a id="features.noexcept"></a>
+### 6.4.【可选】noexcept限定
+
+在正确且切实有效时可以使用限定符 noexcept。
+
+<a id="features.rtti"></a>
+### 6.5.【推荐】运行时类型识别
+
+我们禁止使用 RTTI。
+
+<a id="features.casting"></a>
+### 6.6.【必须】类型转换
+
+使用 C++ 风格的类型转换，如 `static_cast<float>(double_value)`，或者对数字类型的转换使用括号初始化，比如 `int64 y = int64{1} << 42`。不要使用类似于 `int y = (int)x` 或 `int y = int(x)` 等转换方式（不过当你要调用一个构造函数的时候，这是被允许的）。
+
+<a id="features.stream"></a>
+### 6.7.【必须】流
+
+在合适的时候使用流，并且保持 "简洁"。仅对表达值的类型重载 `<<`，并且仅写入对用户可见的变量，不要写入任何实现的细节。
+
+<a id="features.increment_decrement"></a>
+### 6.8.【必须】前置自增和自减
+
+<a id="features.const"></a>
+### 6.9.【必须】`const` 用法
+
+在 API 里，只要合理，就应该使用 `const`。在一些场景下，使用 `constexpr` 比 `const` 更好。
+
+<a id="features.constexpr"></a>
+### 6.10.【推荐】`constexpr` 用法
+
+<a id="features.integer"></a>
+### 6.11.【推荐】整型
+
+如果程序中需要不同大小的变量，可以使用 `<stdint.h>` 中定义的精确宽度的整数类型，如 `int16_t`。如果您的变量可能不小于 2\^31（2GiB），就用 64 位整数类型比如 `int64_t`。
+
+<a id="features.64bit_portability"></a>
+### 6.12.【推荐】64 位下的可移植性
+
+代码应该对 64 位和 32 位系统友好。尤其要注意打印、比较和结构对齐的问题。
+
+<a id="features.macros"></a>
+### 6.13.【必须】预处理宏
+
+<a id="features.nullptr_null"></a>
+### 6.14.【必须】`0`，`nullptr` 和 `NULL`
+
+<a id="features.sizeof"></a>
+### 6.15.【必须】sizeof
+
+<a id="features.type_deduction"></a>
+### 6.16.【推荐】类型推导
+
+推荐使用类型推导仅有2种情况，能够让不熟悉项目代码的人更清晰地读懂代码，或者能够使代码更安全。
+仅因为显式写出类型较为繁杂，应避免使用类型推导。
+
+<a id="features.class_template_argument_deduction"></a>
+### 6.17.【必须】类模板参数推导
+
+<a id="features.lambda"></a>
+### 6.18.【必须】Lambda 表达式
+
+- 如果出现以下情况的，优先考虑使用 Lambda 表达式 ([CppCoreGuidelines F.50](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#f50-use-a-lambda-when-a-function-wont-do-to-capture-local-variables-or-to-write-a-local-function))；
+  - 需要捕获局部变量的，优先使用 Lambda 表达式，而不要使用 `std::bind` 或 仿函数；
+  - 如果函数需要重载或模板函数的，不要使用 Lambda 表达式；
+  - 如果函数仅在局部使用且短小（一眼就可以看出是干什么），优先使用 Lambda 表达式，而不是全局静态函数。
+- 对于局部使用的 Lambda （非常确定的在何时会回调的 Lambda，例如 `std::find_if`），优先采用按引用捕获非值类型局部变量 ([CppCoreGuidelines F.52](对于局部使用的（也包括传递给算法的）lambda，优先采用按引用俘获))；
+- 对于非局部使用的 Lambda （不确定何时会调回调 Lambda 或 Lambda 执行顺序和主调方有数据竞争，例如 `std::thread`），避免采用按引用捕获 ([CppCoreGuidelines F.53](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#f53-avoid-capturing-by-reference-in-lambdas-that-will-be-used-non-locally-including-returned-stored-on-the-heap-or-passed-to-another-thread))；
+
+- 尽量避免使用默认捕获；
+  - 如果捕获的 `this`，禁止使用默认捕获  ([CppCoreGuidelines F.53](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#f53-avoid-capturing-by-reference-in-lambdas-that-will-be-used-non-locally-including-returned-stored-on-the-heap-or-passed-to-another-thread))；
+  - 如果某个 Lambda 表达式并未捕获任何局部变量，禁止添加默认捕获；
+  - 仅在 Lambda 函数体较短，或生命周期比捕获的内容短时，才应该考虑使用默认捕获；
+
+<a id="features.metaprogramming"></a>
+### 6.19.【推荐】模板元编程
+
+避免使用复杂的模板元编程。
+
+<a id="features.boost"></a>
+### 6.20.【可选】Boost
+
+<a id="features.stdhash"></a>
+### 6.21.【推荐】`std::hash`
+
+不用特化 `std::hash` 模板。
+
+<a id="features.others"></a>
+### 6.22.【必须】其他 C++ 特性
+
+与 [Boost](#features.boost) 中的一样，一些现代的 C++ 扩展也存在鼓励妨碍可读性的编码实践。例如，删除可能对读者有帮助的已检查冗余（例如类型名称），或鼓励[模板元编程](#features.metaprogramming)。其他一些扩展与现有机制可以提供的能力相重复，这可能会导致混乱和转换成本。
+
+因此，除了本文其他的代码规范之外，禁止使用以下 C++ 特性：
+
+- 编译期有理数（`<ratio>`），因为会导致接口风格严重依赖于模板。
+- 头文件 `<cfenv>` 和 `<fenv.h>`，因为许多编译器不能稳定支持。
+- 头文件 `<filesystem>`，因为没有充分的测试支持，而且有天然的安全风险。
+
+<a id="features.nonstandard_extensions"></a>
+### 6.23.【推荐】非标准扩展
+
+除非另有说明，不要使用非标准的 C++ 扩展。
+
+<a id="features.aliases"></a>
+### 6.24.【必须】别名
+
+<a id="features.ownership_smart_pointers"></a>
+### 6.25.【推荐】所有权与智能指针
+
+<a id="features.loops"></a>
+### 6.26.【推荐】循环
+
+尽量使用基于范围的 for 循环（[range-based for loop](https://en.cppreference.com/w/cpp/language/range-for)）来遍历容器。
+
+**[返回目录](#top)**
+
+---
+<a id="naming"></a>
+## 7. 命名约定
+
+<a id="naming.general_rules"></a>
+### 7.1.【必须】通用命名规则
+
+<a id="naming.file_names"></a>
+### 7.2.【必须】文件命名
+
+文件名要全部小写，可以包含下划线 "`_`" 或连字符 "`-`"，依照项目的约定.如果没有约定，那么 "`_`" 更好。
+
+不要使用已经存在于 `/usr/include` 下的文件名，如 `db.h`。
+
+<a id="naming.type_names"></a>
+### 7.3.【必须】类型命名
+
+<a id="naming.variable_names"></a>
+### 7.4.【必须】变量命名
+
+<a id="naming.constant_names"></a>
+### 7.5.【必须】常量命名
+
+```cpp
+const int kDaysInAWeek = 7;
+```
+
+<a id="naming.function_names"></a>
+### 7.6.【必须】函数命名
+
+常规函数使用大小写混合。对类成员变量的取值和设值函数也可以与变量名匹配，使用小写下划线命名，但不强制要求，应在同一个类内保持一致。
+
+<a id="naming.namespace_names"></a>
+### 7.7.【必须】命名空间命名
+
+命名空间以小写字母命名。顶级命名空间的名字应该基于项目名称。另外，要注意避免嵌套命名空间的名字和常见的顶级命名空间的名字之间发生冲突。
+
+<a id="naming.enum_names"></a>
+### 7.8.【必须】枚举命名
+
+示例如下：
+
+```cpp
+enum class UrlTableErrors {
+  kOk = 0,
+  kOutOfMemory,
+  kMalformedInput,
+};
+
+enum UrlParseError{
+  kUrlParseErrorOk = 0,
+  kUrlParseErrorInvalidCharacter,
+  kUrlParseErrorOutOfMemory,
+};
+```
+
+如果使用 C++ 11 之后的编译器开发，优先考虑使用 enum class，它可以提供更强的类型检测，并减少潜在的命名冲突。
+
+<a id="naming.macro_names"></a>
+### 7.9.【必须】宏命名
+
+一般情况下不推荐使用宏，优先考虑使用常量或函数，如果你一定要用，那么像这样命名：`MY_MACRO_THAT_SCARES_SMALL_CHILDREN`。
+
+<a id="naming.exceptions_to_name_rules"></a>
+### 7.10.【推荐】命名规则的特例
+
+**说明**
+
+**[返回目录](#top)**
+
+---
+<a id="comments"></a>
+## 8. 注释
+
+<a id="comments.style"></a>
+### 8.1.【推荐】注释风格
+
+`//` 或 `/* */` 都可以；但 `//` *更* 常用。要在如何注释及注释风格上确保统一。
+
+<a id="comments.file"></a>
+### 8.2.【推荐】文件注释
+
+<a id="comments.class"></a>
+### 8.3.【推荐】类注释
+
+<a id="comments.function"></a>
+### 8.4.【推荐】函数注释
+
+<a id="comments.variable"></a>
+### 8.5.【推荐】变量注释
+
+<a id="comments.implementation"></a>
+### 8.6.【推荐】实现注释
+
+<a id="comments.spelling"></a>
+### 8.7.【推荐】标点、拼写和语法
+
+**说明**
+
+注释的通常写法是包含正确大小写和结尾句号的完整叙述性语句。大多数情况下，完整的句子比句子片段可读性更高。短一点的注释（比如代码行尾注释）可以随意点，但依然要注意风格的一致性。
+
+<a id="comments.todo"></a>
+### 8.8.【推荐】TODO 注释
+
+`TODO` 注释要使用全大写的字符串 `TODO`，在随后的圆括号里写上你的名字、邮件地址、bug ID、其它身份标识和与这一 `TODO` 相关的 issue。主要目的是让添加注释的人（也是可以请求提供更多细节的人）可根据规范的`TODO` 格式进行查找。添加 `TODO` 注释并不意味着你要自己来修正，因此当你加上带有姓名的 `TODO` 时，一般都是写上自己的名字。
+
+```cpp
+// TODO(kl@gmail.com): Use a "*" here for concatenation operator.
+// TODO(Zeke) change this to use relations.
+// TODO(bug 12345): remove the "Last visitors" feature
+```
+
+如果加 `TODO` 是为了在“将来某一天做某事”，可以附上一个非常明确的时间（"Fix by November 2005"），或者一个明确的事项（"Remove this code when allclients can handle XML responses."）。
+
+**[返回目录](#top)**
+
+---
+<a id="format"></a>
+## 9. 格式
+
+如果要统一转换格式上不符合现有规范的旧代码，我们推荐使用 [clang-format](https://clang.llvm.org/docs/ClangFormat.html)，这里提供了一个[参考配置文件](format/.clang-format)。
+
+<a id="format.line_length"></a>
+### 9.1.【必须】行长度
+
+将最大字符数放宽到 120，对历史代码是兼容的。对于使用 80/100 字符的历史代码，不用修改，仍然是符合规范的。喜欢 80 字符的团队，可以继续使用 80 字符，还是符合规范的。
+
+<a id="format.non_ascii"></a>
+### 9.2.【必须】非 ASCII 字符
+
+尽量不使用非 ASCII 字符，使用时必须使用 UTF-8 编码。
+非 ASCII 字符（中文等）只能用于注释当中，含有中文注释的代码文件必须使用 UTF-8 编码保存，不能有BOM头。
+出于兼容性考虑，对于使用UTF8编码不能正确工作的 Windows 项目，允许使用UTF8 BOM。
+
+<a id="format.space_tab"></a>
+### 9.3.【必须】空格还是制表位
+
+不要在代码中使用制表符。你应该设置编辑器将制表符转为空格。
+
+<a id="format.function"></a>
+### 9.4.【必须】函数声明与定义
+
+注意以下几点:
+
+- 使用好的参数名。
+- 只有在参数未被使用或者其用途非常明显时，才能省略参数名。
+- 如果返回类型和函数名在一行放不下，分行。
+- 如果返回类型与函数声明或定义分行了，不要缩进。
+- 左圆括号总是和函数名在同一行。
+- 函数名和左圆括号间永远没有空格。
+- 圆括号与参数间没有空格。
+- 左大括号总在最后一个参数同一行的末尾处，不另起新行。
+- 右大括号总是单独位于函数最后一行，或者与左大括号同一行。
+- 右圆括号和左大括号间总是有一个空格。
+- 所有形参应尽可能对齐。
+- 缺省缩进为 2 个空格。
+- 换行后的参数保持 4 个空格的缩进。
+
+<a id="format.lambda"></a>
+### 9.5.【必须】Lambda 表达式
+
+<a id="format.floating_point"></a>
+### 9.6. 【推荐】浮点字面常量
+
+浮点字面常量都要带小数点，小数点两边都要有数字，即使它们使用指数表示法。如果所有浮点数都采用这种熟悉的形式，可以提高可读性，不会被误认为是整数，指数符号的`E/e`不会被误认为十六进制数字。可以使用整数字面常量初始化浮点变量(假设变量类型可以精确地表示该整数)，但是请注意，指数表示法中的数字绝不能用整数。
+
+<a id="format.function_calls"></a>
+### 9.7.【推荐】函数调用
+
+允许3种格式，在一行内写完函数调用，在圆括号里对参数分行，或者参数另起一行且缩进四格。
+
+<a id="format.initializer_list"></a>
+### 9.8.【推荐】列表初始化格式
+
+<a id="format.conditionals"></a>
+### 9.9.【必须】条件语句
+
+<a id="format.loops_switch"></a>
+### 9.10.【必须】循环和开关选择语句
+
+`switch` 语句可以使用大括号分段，以表明 cases 之间不是连在一起的。
+
+<a id="format.pointer_reference"></a>
+### 9.11.【必须】指针和引用表达式
+
+句点或箭头前后不要有空格。 (`*, &`) 作为指针/地址运算符时之后不能有空格。(`*, &`)在用于声明指针变量或参数时，建议空格后置的写法，前置的也允许，但是不要混用。
+
+<a id="format.boolean_expressions"></a>
+### 9.12.【必须】布尔表达式
+
+<a id="format.return_values"></a>
+### 9.13.【必须】返回值
+
+不要在 `return` 表达式里加上非必须的圆括号。
+
+<a id="format.variable_initialization"></a>
+### 9.14.【推荐】变量及数组初始化
+
+当用值初始化对象时，用 `=` 语法；初始化执行主动逻辑时，用 `()` 语法初始化；以上情况不能编译时，才用不带 `=` 的 `{}` 初始化；禁止混用 `{}` 初始化和 `auto`。
+
+<a id="format.preprocessor"></a>
+### 9.15.【必须】预处理指令
+
+预处理指令不要缩进，从行首开始。即使预处理指令位于缩进代码块中，指令也应从行首开始。
+
+<a id="format.class"></a>
+### 9.16.【必须】类格式
+
+访问控制块的声明依次序是 `public:`，`protected:`， `private:`， 每个都缩进1个空格。
+
+<a id="format.constructor_initializer_list"></a>
+### 9.17.【必须】构造函数初始值列表
+
+<a id="format.namespace"></a>
+### 9.18.【必须】命名空间格式
+
+<a id="format.horizontal_whitespace"></a>
+### 9.19.【必须】水平留白
+
+水平留白的使用取决于代码的位置。永远不要在行尾添加没意义的留白。
+
+**说明**
+
+#### 通用
+
+```cpp
+void f(bool b) {  // 左大括号前总是有空格
+  ...
+int i = 0;  // 分号前不加空格
+// 列表初始化中大括号内的空格是可选的，
+// 如果加了空格，那么两边都要加上
+int x[] = { 0 };
+int x[] = {0};
+
+// 继承与初始化列表中的冒号前后恒有空格
+class Foo : public Bar {
+ public:
+  // 对于单行函数的实现，在大括号和函数实现之间加上空格
+  Foo(int b) : Bar(), baz_(b) {}  // 大括号里面是空的话，不加空格
+  void Reset() { baz_ = 0; }  // 用空格把大括号与实现分开
+  ...
+```
+
+添加冗余的留白会给其他人编辑时造成额外负担，因此，行尾不要留空格。如果确定一行代码已经修改完毕，将多余的空格去掉;或者在专门清理空格时去掉（尤其是在没有其他人在处理这件事的时候)。
+
+#### 循环和条件语句
+
+```cpp
+if (b) {          // if 条件语句和循环语句关键字后均有空格
+} else {          // else 前后有空格
+}
+while (test) {}   // 圆括号内部不紧邻空格
+switch (i) {
+for (int i = 0; i < 5; ++i) {
+
+// 循环和条件语句的圆括号内可以有空格,
+// 但这种情况很少，要保持一致
+switch ( i ) {
+if ( test ) {
+for ( int i = 0; i < 5; ++i ) {
+
+// 循环里内分号后恒有空格，分号前可以加个空格
+for ( ; i < 5 ; ++i) {
+switch (i) {
+  case 1:         // switch case 的冒号前无空格
+    ...
+  case 2: break;  // 如果冒号后有代码，加个空格
+```
+
+#### 运算符
+
+```cpp
+// 赋值运算符前后总是有空格
+x = 0;
+
+// 其它二元运算符前后也恒有空格，对于表达式的子式可以不加空格
+// 圆括号内部没有紧邻空格
+v = w * x + y / z;
+v = w*x + y/z;
+v = w * (x + z);
+
+// 在参数和一元运算符之间不加空格
+x = -5;
+++x;
+if (x && !y)
+  ...
+```
+
+#### 模板和转换
+
+```cpp
+// 尖括号(< 和 >) 不与空格紧邻，< 前没有空格，> 和 ( 之间也没有空格
+vector<string> x;
+y = static_cast<char*>(x);
+
+// 在类型与指针运算符之间也可以留空格，但要保持一致
+vector<char *> x;
+```
+
+<a id="format.vertical_whitespace"></a>
+### 9.20.【必须】空行
+
+原则上空行越少越好，但适当空行可以形成代码分组使其更易读。
+
+**[返回目录](#top)**
+
+---
+<a id="rule_exceptions"></a>
+## 10. 规则特例
+
+前面说明的编程习惯基本都是强制性的。但所有优秀的规则都允许例外,
+
+### 10.1. 现有不合规范的代码
+
+对于现有不符合既定编程风格的代码可以网开一面。
+
+当你修改使用其他风格的代码时，为了与代码原有风格保持一致可以不使用本指南约定。如果不放心，可以与代码原作者或现在的负责人员商讨。
+
+### 10.2. Windows 代码
+
+我们希望任何人都可以顺利读懂你的代码，所以针对所有平台的 C++ 编程只给出一个单独的指南。在不违反本规范的前提下，可以遵循 Windows 上的惯例。
+
+**说明**
+
+- 不要使用匈牙利命名法（比如把整型变量命名成 `iNum`）。使用本规范的命名约定，比如不要给类名加前缀（例如 `C`）。
+- Windows 定义了很多原生类型的同义词 ，如 `DWORD`，`HANDLE` 等等。在调用 Windows API 时这是完全可以接受甚至鼓励的。即使如此，还是尽量使用原有的 C++ 类型，例如使用 `const TCHAR *` 而不是 `LPCTSTR`。
+- 使用 Microsoft Visual C++ 进行编译时，将警告级别设置为 3 或更高，并将所有警告（warnings）当作错误（errors）处理。
+- 除非万不得已，不要使用任何非标准的扩展，如 `#pragma` 和 `__declspec`。使用 `__declspec(dllimport)` 和 `__declspec(dllexport)` 是允许的，但必须通过宏来使用，比如 `DLLIMPORT` 和 `DLLEXPORT`，这样其他人在分享使用这些代码时可以很容易地禁用这些扩展。
+
+- 在使用 COM 和 ATL/WTL 类时，为了实现 COM 或 ATL/WTL 类/接口，你可能不得不使用多重`实现继承`。
+- 通常为了利用预编译头文件，每个源文件的开头都会包含一个名为 `StdAfx.h` 或 `precompile.h` 的文件。为了使代码方便与其他项目共享，请避免显式包含此文件 (除了在 `precompile.cc` 中)，使用 `/FI` 编译器选项以自动包含该文件。
+- 资源头文件通常命名为 `resource.h` 且只包含宏，这一文件不需要遵守本代码规范。
+
+在不违反本规范的前提下，可以遵循 Windows 上的惯例。

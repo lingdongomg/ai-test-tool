@@ -131,6 +131,34 @@ const router = createRouter({
       meta: { title: 'AI 助手' }
     },
     
+    // ==================== 知识库管理 ====================
+    {
+      path: '/knowledge',
+      name: 'Knowledge',
+      redirect: '/knowledge/list',
+      meta: { title: '知识库' },
+      children: [
+        {
+          path: 'list',
+          name: 'KnowledgeList',
+          component: () => import('../views/knowledge/KnowledgeList.vue'),
+          meta: { title: '知识管理', parent: 'Knowledge' }
+        },
+        {
+          path: 'pending',
+          name: 'KnowledgePending',
+          component: () => import('../views/knowledge/PendingReview.vue'),
+          meta: { title: '待审核', parent: 'Knowledge' }
+        },
+        {
+          path: 'search',
+          name: 'KnowledgeSearch',
+          component: () => import('../views/knowledge/SearchTest.vue'),
+          meta: { title: '检索测试', parent: 'Knowledge' }
+        }
+      ]
+    },
+    
     // ==================== 系统设置 ====================
     {
       path: '/import',

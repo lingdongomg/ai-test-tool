@@ -1,0 +1,483 @@
+---
+globs: **/*.go
+alwaysApply: false
+---
+# tRPC 框架架构设计规范
+
+## 1. 概述
+
+本文档定义了基于 tRPC 框架的优秀架构设计规范，采用清晰的分层架构设计，遵循依赖倒置原则，确保代码的可维护性、可测试性和可扩展性。
+
+## 2. 分层架构
+
+### 2.1 【必须】项目目录结构
+
+项目必须采用以下标准目录结构：
+
+```
+项目根目录/
+├── main.go              # 应用入口
+├── svc/                 # 服务上下文层
+│   └── service_context.go
+├── service/             # 服务层（RPC接口层）
+│   └── service.go
+├── logic/               # 业务逻辑层
+│   └── {业务模块}/
+├── repo/                # 依赖组件层（数据访问、外部服务）
+│   └── {组件名}/
+└── entity/              # 实体模型层
+    ├── model/           # 数据模型
+    ├── config/          # 配置模型
+    └── errcode/         # 错误码定义
+```
+
+### 2.2 【必须】依赖关系规则
+
+依赖方向必须遵循以下规则（从上到下）：
+
+```
+main.go
+  ↓
+svc/ (ServiceContext)
+  ↓
+service/ (RPC接口层)
+  ↓
+logic/ (业务逻辑层)
+  ↓
+repo/ (依赖组件层)
+  ↓
+entity/ (实体模型层)
+```
+
+**依赖规则**：
+1. **上层可以依赖下层，下层不能依赖上层**
+2. **同层之间可以相互依赖**（需谨慎使用）
+3. **所有层都可以依赖 `entity/` 层**
+4. **`logic/` 层只能依赖 `repo/` 和 `entity/` 层**
+5. **`service/` 层可以依赖 `logic/`、`repo/` 和 `entity/` 层**
+6. **`repo/` 层只能依赖 `entity/` 层和第三方库**
+
+## 3. 各层职责与规范
+
+### 3.1 【必须】应用入口层（main.go）
+
+**职责**：
+- 初始化 TRPC 服务器
+- 创建服务上下文（ServiceContext）
+- 注册所有服务
+
+**规范**：
+- 仅包含应用启动逻辑
+- 不包含业务逻辑
+- 统一管理 TRPC 插件导入
+- 必须导入常用插件：
+  - `trpc-config-rainbow` - 配置中心
+  - `trpc-filter/debuglog` - 调试日志
+  - `trpc-filter/recovery` - 异常恢复
+  - `trpc-filter/validation` - 参数校验
+  - `trpc-metrics-runtime` - 指标监控
+  - `trpc-naming-polaris` - 服务发现
+
+**示例**：
+```go
+package main
+
+import (
+	"log"
+	"{project_package}/service"
+	"{project_package}/svc"
+	"git.code.oa.com/trpc-go/trpc-go"
+	_ "git.code.oa.com/trpc-go/trpc-config-rainbow"
+	_ "git.code.oa.com/trpc-go/trpc-filter/debuglog"
+	_ "git.code.oa.com/trpc-go/trpc-filter/recovery"
+	_ "git.code.oa.com/trpc-go/trpc-filter/validation"
+	_ "git.code.oa.com/trpc-go/trpc-metrics-runtime"
+	_ "git.code.oa.com/trpc-go/trpc-naming-polaris"
+)
+
+func main() {
+	s := trpc.NewServer()
+	svcCtx, err := svc.New()
+	if err != nil {
+		log.Fatalf("NewServiceContext failed, err: %v", err)
+	}
+	if err := service.Register(s, svcCtx); err != nil {
+		log.Fatalf("Register service failed, err: %v", err)
+	}
+}
+```
+
+### 3.2 【必须】服务上下文层（svc/）
+
+**职责**：
+- 统一管理所有依赖组件（数据库、缓存、配置中心、外部服务等）
+- 提供依赖注入的容器
+- 初始化所有基础设施组件
+
+**规范**：
+- `ServiceContext` 结构体必须包含所有依赖组件的接口
+- `New()` 函数负责初始化所有组件
+- 组件依赖的初始化参数通常由 `remotecfg.Proxy` 提供
+- 所有组件都应该是接口类型，便于测试和替换
+- 必须进行 nil 检查
+
+**文件结构**：
+- `svc/service_context.go` - 服务上下文定义和初始化
+
+**示例**：
+```go
+package svc
+
+import (
+	"{project_package}/repo/remotecfg"
+)
+
+type ServiceContext struct {
+	RemoteConfig remotecfg.Proxy
+	Storage      repo.Storage
+	Cache        repo.Cache
+	// 其他依赖组件
+}
+
+func New() (*ServiceContext, error) {
+	cfg, err := remotecfg.New(remoteConfigName)
+	if err != nil {
+		return nil, err
+	}
+	if err = cfg.Load(); err != nil {
+		return nil, err
+	}
+	return &ServiceContext{
+		RemoteConfig: cfg,
+		// ...
+	}, nil
+}
+```
+
+### 3.3 【必须】服务层（service/）
+
+**职责**：
+- 实现 TRPC 协议定义的 RPC 接口
+- 处理请求参数校验和响应构建
+- 调用业务逻辑层处理业务
+- 处理异常和错误码转换
+
+**规范**：
+- `service.go` 为服务初始化总入口
+- **多服务结构**：多个服务时，每个服务对应一个子目录（如 `service/rpcA/`）
+- **单服务结构**：仅一个服务时，所有接口直接置于 `service/` 目录下
+- **接口文件**：每个服务（或单服务）的每个接口需单独文件定义（如 `service/rpcA/api_a.go`）
+- 服务实现结构体通过依赖注入获取 `logic` 层和 `repo` 层的依赖
+- 必须进行参数校验
+- 必须进行错误处理和错误码转换
+
+**文件结构**：
+- `service/service.go` - 服务注册入口
+- `service/{接口名}.go` - 单个 RPC 接口实现（单服务模式）
+- `service/{服务名}/service.go` - 服务注册入口（多服务模式）
+- `service/{服务名}/{接口名}.go` - 单个 RPC 接口实现（多服务模式）
+
+**示例**：
+```go
+// service.go
+package service
+
+import (
+	"errors"
+	"git.code.oa.com/trpc-go/trpc-go/server"
+	pb "{pb_package}"
+	"{project_package}/svc"
+)
+
+func Register(s *server.Server, svcCtx *svc.ServiceContext) error {
+	impl, err := NewService(svcCtx)
+	if err != nil {
+		return err
+	}
+	pb.RegisterRPCService(s, impl)
+	return nil
+}
+
+func NewService(svcCtx *svc.ServiceContext) (pb.RPCService, error) {
+	if svcCtx == nil {
+		return nil, errors.New("service context is nil")
+	}
+	return &serviceImpl{
+		Handler: svcCtx.Handler,
+	}, nil
+}
+
+type serviceImpl struct {
+	Handler logic.Handler
+}
+
+// create.go
+func (s *serviceImpl) Create(ctx context.Context, req *pb.CreateReq) (*pb.CreateRsp, error) {
+	// 参数校验
+	// 调用 logic 层
+	// 构建响应
+}
+```
+
+### 3.4 【必须】业务逻辑层（logic/）
+
+**职责**：
+- 实现核心业务逻辑
+- 编排多个 `repo` 组件的调用
+- 处理业务规则和流程控制
+- 不直接依赖外部服务，通过 `repo` 层抽象
+
+**规范**：
+- `logic/` 存放所有业务逻辑，每个逻辑一个子目录（如 `logic/processor/`）
+- **接口定义**：`api.go` 定义业务逻辑接口
+- **具体实现**：`api_impl.go` 实现业务逻辑
+- **多实现场景**：不同的实现应放在各自独立的文件中（如 `api_impl_a.go`）
+- **初始化函数 (`New`)**：
+  - 固定入参：必须接收 `*svc.ServiceContext`
+  - 依赖注入：依赖组件从 `svcCtx` 中获取并注入到 `impl` 结构体
+  - 返回值：业务逻辑实例和 `error`
+  - 必须进行依赖检查
+
+**文件结构**：
+- `logic/{业务模块}/api.go` - 业务逻辑接口定义
+- `logic/{业务模块}/api_impl.go` - 业务逻辑实现
+
+**示例**：
+```go
+// api.go
+package processor
+
+import (
+	"context"
+	"{project_package}/entity/model"
+)
+
+type Processor interface {
+	Process(ctx context.Context, data *model.Data) (*model.Result, error)
+}
+
+// api_impl.go
+package processor
+
+import (
+	"context"
+	"errors"
+	"{project_package}/entity/model"
+	"{project_package}/repo"
+	"{project_package}/svc"
+)
+
+func NewProcessor(svcCtx *svc.ServiceContext) (Processor, error) {
+	if svcCtx == nil {
+		return nil, errors.New("service context is nil")
+	}
+	if svcCtx.Storage == nil {
+		return nil, errors.New("storage is nil")
+	}
+	return &processorImpl{
+		Storage: svcCtx.Storage,
+	}, nil
+}
+
+type processorImpl struct {
+	Storage repo.Storage
+}
+
+func (p *processorImpl) Process(ctx context.Context, data *model.Data) (*model.Result, error) {
+	// 业务逻辑实现
+}
+```
+
+### 3.5 【必须】依赖组件层（repo/）
+
+**职责**：
+- 封装数据访问逻辑（数据库、缓存等）
+- 封装外部服务调用（HTTP、RPC 等）
+- 提供统一的接口抽象，隐藏实现细节
+
+**规范**：
+- `repo/` 为组件根目录，每个组件一个子目录（如 `repo/remotecfg/`、`repo/mysql/`、`repo/redis/` 等）
+- **接口定义**：`api.go` 定义组件接口
+- **具体实现**：`api_impl.go` 实现组件功能
+- **多实现场景**：不同的实现应放在各自独立的文件中（如 `api_impl_a.go`）
+- **初始化函数 (`New`)**：
+  - 入参为依赖项（简化依赖，利于测试）
+  - 返回：组件实例和 `error`
+
+**文件结构**：
+- `repo/{组件名}/api.go` - 组件接口定义
+- `repo/{组件名}/api_impl.go` - 组件实现
+
+**示例**：
+```go
+// api.go
+package storage
+
+import (
+	"context"
+	"{project_package}/entity/model"
+)
+
+type Storage interface {
+	Save(ctx context.Context, data *model.Data) error
+	Get(ctx context.Context, id string) (*model.Data, error)
+}
+
+func New(dsn string) (Storage, error) {
+	return newMySQLStorage(dsn), nil
+}
+
+// api_impl.go
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"{project_package}/entity/model"
+)
+
+type mysqlStorage struct {
+	db *sql.DB
+}
+
+func newMySQLStorage(dsn string) *mysqlStorage {
+	// 初始化 MySQL 连接
+	return &mysqlStorage{}
+}
+
+func (s *mysqlStorage) Save(ctx context.Context, data *model.Data) error {
+	// 实现保存逻辑
+}
+
+func (s *mysqlStorage) Get(ctx context.Context, id string) (*model.Data, error) {
+	// 实现查询逻辑
+}
+```
+
+### 3.6 【必须】实体模型层（entity/）
+
+**职责**：
+- 定义数据模型结构
+- 定义配置结构
+- 定义错误码常量
+- 提供领域实体定义
+
+**规范**：
+- `entity/` 存放所有实体模型，每个实体一个子目录（如 `entity/meta/`）
+- **简单模型**：统一在 `model` 包下定义结构
+- **复杂模型**：拆分到子包中，或使用独立文件（如 `entity/meta/meta.go`）
+- 不包含业务逻辑，仅为数据结构定义
+- 错误码必须使用 `trpc-go/errs` 包定义
+
+**文件结构**：
+- `entity/model/` - 通用数据模型
+- `entity/config/` - 配置结构定义
+- `entity/errcode/` - 错误码定义
+- `entity/{实体名}/` - 特定领域实体
+
+**示例**：
+```go
+// entity/model/model.go
+package model
+
+type User struct {
+	ID   int64
+	Name string
+}
+
+// entity/config/config.go
+package config
+
+type Config struct {
+	Database DatabaseConfig
+	Redis    RedisConfig
+}
+
+// entity/errcode/errcode.go
+package errcode
+
+import (
+	"git.code.oa.com/trpc-go/trpc-go/errs"
+)
+
+var (
+	BackendErr = errs.New(10001, "backend error")
+)
+```
+
+## 4. 最佳实践
+
+### 4.1 【推荐】接口优先
+
+- 所有业务逻辑和组件都应定义接口
+- 通过接口实现依赖倒置，便于测试和替换
+- 接口应该小而专一，避免臃肿
+
+### 4.2 【必须】依赖注入
+
+- 通过 `ServiceContext` 统一管理依赖
+- 在初始化函数中注入依赖，避免全局变量
+- 依赖最小化：只注入必要的依赖，避免过度依赖
+
+### 4.3 【必须】错误处理
+
+- 使用 `entity/errcode` 统一错误码定义
+- 在 `service` 层统一处理错误码转换
+- 错误信息应该清晰明确
+
+### 4.4 【必须】参数校验
+
+- 在 `service` 层进行参数校验
+- 使用 TRPC 的 validation 插件进行自动校验
+- 必须进行 nil 检查
+
+### 4.5 【推荐】配置管理
+
+- 统一使用 `remotecfg` 管理配置
+- 配置结构定义在 `entity/config` 中
+- 配置应该支持热更新
+
+### 4.6 【推荐】代码组织
+
+- 每个功能模块独立目录
+- 接口和实现分离
+- 单一职责原则
+- 禁止循环依赖：确保依赖关系是单向的
+
+### 4.7 【必须】测试友好
+
+- 通过接口和依赖注入，便于编写单元测试
+- 避免跨层调用：`logic` 层不应直接调用 `service` 层
+- 组件应该易于 mock
+
+## 5. 项目初始化工作流
+
+### 5.1 【必须】依赖参数
+
+项目初始化需要以下参数：
+1. **`pb_package`**: TRPC PB 协议包地址
+2. **`path`**: 项目存放路径
+3. **大仓模式**: (可选) 默认使用大仓模式
+   - **大仓**: 沿用大仓的 `go.mod`
+   - **小仓**: 需要创建新的 `go.mod` 文件
+
+### 5.2 【必须】执行步骤
+
+1. **获取依赖**: 执行 `go get pb_package` 后，执行 `go mod tidy`
+2. **模板初始化**: 复制 `.framework` 下所有文件到 `path`
+3. **确定 Go 模块路径**: 根据 `path` 和 `go.mod` 确定 `project_package`
+4. **替换占位符**: 替换 `path` 下所有文件中的 `{pb_package}` 和 `{project_package}` 为实际值
+5. **参考规范**: 参考 RULE.md
+6. **service逻辑**:
+   1. **go doc 接口查询**: 可以使用 `go doc` 查询 import 的 pb 的 service 结构
+   2. **服务名替换**: 根据 PB 协议，在 `RegisterRPCService` 中替换 `RPCService` 为实际服务名
+   3. **接口实现**: 根据 PB 协议，实现 `RPCService` 接口的 `impl` 类，并注册到 `NewService` 函数中
+   4. **方法拆分**: 将 `impl` 实例的各函数拆分到 `service/` 目录下的独立文件（如：`(impl)Create()` 移至 `service/create.go`）
+
+## 6. 注意事项
+
+1. **禁止循环依赖**：确保依赖关系是单向的
+2. **避免跨层调用**：`logic` 层不应直接调用 `service` 层
+3. **接口隔离**：接口应该小而专一，避免臃肿
+4. **依赖最小化**：只注入必要的依赖，避免过度依赖
+5. **测试友好**：通过接口和依赖注入，便于编写单元测试

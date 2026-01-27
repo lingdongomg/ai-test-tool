@@ -1,13 +1,21 @@
 """
 数据模型定义
+该文件内容使用AI生成，注意识别准确性
+重构版本：添加 BaseModel 基类，移除冗余模型
 """
 
 import json
-from typing import Any, Self
-from dataclasses import dataclass, field, asdict
+from typing import Any, Self, TypeVar, get_type_hints, Type
+from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime
 from enum import Enum
 
+T = TypeVar('T', bound='BaseModel')
+
+
+# =====================================================
+# 枚举定义
+# =====================================================
 
 class TaskStatus(Enum):
     """任务状态"""
@@ -15,6 +23,13 @@ class TaskStatus(Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class TaskType(Enum):
+    """任务类型"""
+    LOG_ANALYSIS = "log_analysis"
+    TEST_GENERATION = "test_generation"
+    REPORT = "report"
 
 
 class TestCaseCategory(Enum):
@@ -46,6 +61,7 @@ class ReportType(Enum):
     ANALYSIS = "analysis"
     TEST = "test"
     SUMMARY = "summary"
+    INSIGHT = "insight"
 
 
 class TriggerType(Enum):
@@ -62,303 +78,21 @@ class ExecutionStatus(Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    FAILED = "failed"
 
 
-@dataclass
-class AnalysisTask:
-    """分析任务模型"""
-    task_id: str
-    name: str
-    log_file_path: str
-    description: str = ""
-    log_file_size: int = 0
-    status: TaskStatus = TaskStatus.PENDING
-    total_lines: int = 0
-    processed_lines: int = 0
-    total_requests: int = 0
-    total_test_cases: int = 0
-    error_message: str = ""
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['status'] = self.status.value if isinstance(self.status, TaskStatus) else self.status
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'status' in data and isinstance(data['status'], str):
-            data['status'] = TaskStatus(data['status'])
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+class ExecutionType(Enum):
+    """执行类型"""
+    TEST = "test"
+    HEALTH_CHECK = "health_check"
+    SCENARIO = "scenario"
 
 
-@dataclass
-class ParsedRequestRecord:
-    """解析请求记录模型"""
-    task_id: str
-    request_id: str
-    method: str
-    url: str
-    category: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
-    body: str | None = None
-    query_params: dict[str, str] = field(default_factory=dict)
-    http_status: int = 0
-    response_time_ms: float = 0
-    response_body: str | None = None
-    has_error: bool = False
-    error_message: str = ""
-    has_warning: bool = False
-    warning_message: str = ""
-    curl_command: str = ""
-    timestamp: str = ""
-    raw_logs: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        # JSON字段序列化
-        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
-        result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
-        result['metadata'] = json.dumps(self.metadata, ensure_ascii=False) if self.metadata else '{}'
-        # body 可能是字典（来自AI解析），需要序列化为字符串
-        if isinstance(result['body'], dict):
-            result['body'] = json.dumps(result['body'], ensure_ascii=False)
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        # JSON字段反序列化
-        if 'headers' in data and isinstance(data['headers'], str):
-            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
-        if 'query_params' in data and isinstance(data['query_params'], str):
-            data['query_params'] = json.loads(data['query_params']) if data['query_params'] else {}
-        if 'metadata' in data and isinstance(data['metadata'], str):
-            data['metadata'] = json.loads(data['metadata']) if data['metadata'] else {}
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
-class TestCaseRecord:
-    """测试用例记录模型
-    
-    测试用例以接口(endpoint)为维度进行管理，一个接口可以有多个测试用例。
-    """
-    case_id: str
-    endpoint_id: str  # 关联接口ID
-    name: str
-    method: str
-    url: str
-    description: str = ""
-    category: TestCaseCategory = TestCaseCategory.NORMAL
-    priority: TestCasePriority = TestCasePriority.MEDIUM
-    headers: dict[str, str] = field(default_factory=dict)
-    body: dict[str, Any] | None = None
-    query_params: dict[str, str] = field(default_factory=dict)
-    expected_status_code: int = 200
-    expected_response: dict[str, Any] = field(default_factory=dict)
-    assertions: list[dict[str, Any]] = field(default_factory=list)  # 断言规则
-    max_response_time_ms: int = 3000
-    tags: list[str] = field(default_factory=list)
-    is_enabled: bool = True
-    is_ai_generated: bool = False  # 是否AI生成
-    source_task_id: str = ""  # 来源任务ID（如果是AI生成的）
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['category'] = self.category.value if isinstance(self.category, TestCaseCategory) else self.category
-        result['priority'] = self.priority.value if isinstance(self.priority, TestCasePriority) else self.priority
-        # JSON字段序列化
-        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
-        result['body'] = json.dumps(self.body, ensure_ascii=False) if self.body else None
-        result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
-        result['expected_response'] = json.dumps(self.expected_response, ensure_ascii=False) if self.expected_response else '{}'
-        result['assertions'] = json.dumps(self.assertions, ensure_ascii=False) if self.assertions else '[]'
-        result['tags'] = json.dumps(self.tags, ensure_ascii=False) if self.tags else '[]'
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        # 处理必填字段的默认值（兼容旧数据）
-        if not data.get('endpoint_id'):
-            data['endpoint_id'] = ''  # 旧数据可能没有 endpoint_id
-        # 枚举字段转换
-        if 'category' in data and isinstance(data['category'], str):
-            try:
-                data['category'] = TestCaseCategory(data['category'])
-            except ValueError:
-                data['category'] = TestCaseCategory.NORMAL
-        if 'priority' in data and isinstance(data['priority'], str):
-            try:
-                data['priority'] = TestCasePriority(data['priority'])
-            except ValueError:
-                data['priority'] = TestCasePriority.MEDIUM
-        # JSON字段反序列化
-        if 'headers' in data and isinstance(data['headers'], str):
-            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
-        if 'body' in data and isinstance(data['body'], str):
-            data['body'] = json.loads(data['body']) if data['body'] else None
-        if 'query_params' in data and isinstance(data['query_params'], str):
-            data['query_params'] = json.loads(data['query_params']) if data['query_params'] else {}
-        if 'expected_response' in data and isinstance(data['expected_response'], str):
-            data['expected_response'] = json.loads(data['expected_response']) if data['expected_response'] else {}
-        if 'assertions' in data and isinstance(data['assertions'], str):
-            data['assertions'] = json.loads(data['assertions']) if data['assertions'] else []
-        if 'tags' in data and isinstance(data['tags'], str):
-            data['tags'] = json.loads(data['tags']) if data['tags'] else []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
-class TestResultRecord:
-    """测试结果记录模型（单个测试用例的执行结果）"""
-    case_id: str
-    execution_id: str
-    status: TestResultStatus
-    actual_status_code: int = 0
-    actual_response_time_ms: float = 0
-    actual_response_body: str = ""
-    actual_headers: dict[str, str] = field(default_factory=dict)
-    error_message: str = ""
-    assertion_results: list[dict[str, Any]] = field(default_factory=list)
-    executed_at: datetime | None = None
-    created_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['status'] = self.status.value if isinstance(self.status, TestResultStatus) else self.status
-        result['actual_headers'] = json.dumps(self.actual_headers, ensure_ascii=False) if self.actual_headers else '{}'
-        result['assertion_results'] = json.dumps(self.assertion_results, ensure_ascii=False) if self.assertion_results else '[]'
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'status' in data and isinstance(data['status'], str):
-            data['status'] = TestResultStatus(data['status'])
-        if 'actual_headers' in data and isinstance(data['actual_headers'], str):
-            data['actual_headers'] = json.loads(data['actual_headers']) if data['actual_headers'] else {}
-        if 'assertion_results' in data and isinstance(data['assertion_results'], str):
-            data['assertion_results'] = json.loads(data['assertion_results']) if data['assertion_results'] else []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
-class TestExecution:
-    """测试执行批次模型
-    
-    记录一次测试执行的整体信息，可以包含多个测试用例的执行。
-    """
-    execution_id: str
-    name: str = ""
-    description: str = ""
-    trigger_type: TriggerType = TriggerType.MANUAL
-    status: ExecutionStatus = ExecutionStatus.PENDING
-    base_url: str = ""
-    environment: str = ""
-    variables: dict[str, Any] = field(default_factory=dict)  # 全局变量
-    headers: dict[str, str] = field(default_factory=dict)  # 全局请求头
-    total_cases: int = 0
-    passed_cases: int = 0
-    failed_cases: int = 0
-    error_cases: int = 0
-    skipped_cases: int = 0
-    duration_ms: int = 0
-    error_message: str = ""
-    scheduled_task_id: str = ""  # 关联的定时任务ID（如果是定时触发）
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    created_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['trigger_type'] = self.trigger_type.value if isinstance(self.trigger_type, TriggerType) else self.trigger_type
-        result['status'] = self.status.value if isinstance(self.status, ExecutionStatus) else self.status
-        result['variables'] = json.dumps(self.variables, ensure_ascii=False) if self.variables else '{}'
-        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'trigger_type' in data and isinstance(data['trigger_type'], str):
-            data['trigger_type'] = TriggerType(data['trigger_type'])
-        if 'status' in data and isinstance(data['status'], str):
-            data['status'] = ExecutionStatus(data['status'])
-        if 'variables' in data and isinstance(data['variables'], str):
-            data['variables'] = json.loads(data['variables']) if data['variables'] else {}
-        if 'headers' in data and isinstance(data['headers'], str):
-            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
-class AnalysisReport:
-    """分析报告模型"""
-    task_id: str
-    title: str
-    content: str
-    report_type: ReportType = ReportType.ANALYSIS
-    format: str = "markdown"
-    statistics: dict[str, Any] = field(default_factory=dict)
-    issues: list[dict[str, Any]] = field(default_factory=list)
-    recommendations: list[str] = field(default_factory=list)
-    created_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['report_type'] = self.report_type.value if isinstance(self.report_type, ReportType) else self.report_type
-        result['statistics'] = json.dumps(self.statistics, ensure_ascii=False) if self.statistics else '{}'
-        result['issues'] = json.dumps(self.issues, ensure_ascii=False) if self.issues else '[]'
-        result['recommendations'] = json.dumps(self.recommendations, ensure_ascii=False) if self.recommendations else '[]'
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'report_type' in data and isinstance(data['report_type'], str):
-            data['report_type'] = ReportType(data['report_type'])
-        if 'statistics' in data and isinstance(data['statistics'], str):
-            data['statistics'] = json.loads(data['statistics']) if data['statistics'] else {}
-        if 'issues' in data and isinstance(data['issues'], str):
-            data['issues'] = json.loads(data['issues']) if data['issues'] else []
-        if 'recommendations' in data and isinstance(data['recommendations'], str):
-            data['recommendations'] = json.loads(data['recommendations']) if data['recommendations'] else []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-# =====================================================
-# 接口标签和端点模型
-# =====================================================
-
-@dataclass
-class ApiTag:
-    """接口标签模型"""
-    name: str
-    description: str = ""
-    color: str = "#1890ff"
-    parent_id: int | None = None
-    sort_order: int = 0
-    is_system: bool = False
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+class ResultType(Enum):
+    """结果类型"""
+    TEST = "test"
+    HEALTH_CHECK = "health_check"
+    SCENARIO_STEP = "scenario_step"
 
 
 class EndpointSourceType(Enum):
@@ -367,59 +101,6 @@ class EndpointSourceType(Enum):
     POSTMAN = "postman"
     MANUAL = "manual"
 
-
-@dataclass
-class ApiEndpoint:
-    """接口端点模型"""
-    endpoint_id: str
-    name: str
-    method: str
-    path: str
-    description: str = ""
-    summary: str = ""
-    parameters: list[dict[str, Any]] = field(default_factory=list)
-    request_body: dict[str, Any] = field(default_factory=dict)
-    responses: dict[str, Any] = field(default_factory=dict)
-    security: list[dict[str, Any]] = field(default_factory=list)
-    source_type: EndpointSourceType = EndpointSourceType.MANUAL
-    source_file: str = ""
-    is_deprecated: bool = False
-    tags: list[str] = field(default_factory=list)  # 标签名称列表
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['source_type'] = self.source_type.value if isinstance(self.source_type, EndpointSourceType) else self.source_type
-        result['parameters'] = json.dumps(self.parameters, ensure_ascii=False) if self.parameters else '[]'
-        result['request_body'] = json.dumps(self.request_body, ensure_ascii=False) if self.request_body else '{}'
-        result['responses'] = json.dumps(self.responses, ensure_ascii=False) if self.responses else '{}'
-        result['security'] = json.dumps(self.security, ensure_ascii=False) if self.security else '[]'
-        # tags不存储到数据库，通过关联表管理
-        del result['tags']
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'source_type' in data and isinstance(data['source_type'], str):
-            data['source_type'] = EndpointSourceType(data['source_type'])
-        if 'parameters' in data and isinstance(data['parameters'], str):
-            data['parameters'] = json.loads(data['parameters']) if data['parameters'] else []
-        if 'request_body' in data and isinstance(data['request_body'], str):
-            data['request_body'] = json.loads(data['request_body']) if data['request_body'] else {}
-        if 'responses' in data and isinstance(data['responses'], str):
-            data['responses'] = json.loads(data['responses']) if data['responses'] else {}
-        if 'security' in data and isinstance(data['security'], str):
-            data['security'] = json.loads(data['security']) if data['security'] else []
-        if 'tags' not in data:
-            data['tags'] = []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-# =====================================================
-# 测试场景模型
-# =====================================================
 
 class StepType(Enum):
     """步骤类型"""
@@ -440,8 +121,432 @@ class ScenarioStatus(Enum):
     CANCELLED = "cancelled"
 
 
+class ChangeType(Enum):
+    """变更类型"""
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    RESTORE = "restore"
+    ENABLE = "enable"
+    DISABLE = "disable"
+    ARCHIVE = "archive"
+
+
+class KnowledgeType(Enum):
+    """知识类型"""
+    PROJECT_CONFIG = "project_config"      # 项目配置知识
+    BUSINESS_RULE = "business_rule"        # 业务规则知识
+    MODULE_CONTEXT = "module_context"      # 模块上下文知识
+    TEST_EXPERIENCE = "test_experience"    # 测试经验知识
+
+
+class KnowledgeStatus(Enum):
+    """知识状态"""
+    ACTIVE = "active"      # 活跃
+    PENDING = "pending"    # 待审核
+    ARCHIVED = "archived"  # 已归档
+
+
+class KnowledgeSource(Enum):
+    """知识来源"""
+    MANUAL = "manual"              # 手动创建
+    LOG_LEARNING = "log_learning"  # 日志学习
+    TEST_LEARNING = "test_learning"  # 测试学习
+
+
+# =====================================================
+# 基类定义
+# =====================================================
+
+class BaseModel:
+    """
+    数据模型基类（混入类）
+    提供通用的序列化和反序列化方法
+    注意：这不是一个 dataclass，不能被继承为 dataclass 的基类
+    """
+    
+    def to_dict(self) -> dict[str, Any]:
+        """转换为字典，自动处理枚举和 JSON 字段"""
+        result = asdict(self)  # type: ignore
+        
+        # 处理枚举字段
+        for field_name, enum_type in self._get_enum_fields_class().items():
+            if field_name in result:
+                value = result[field_name]
+                if isinstance(value, Enum):
+                    result[field_name] = value.value
+        
+        # 处理 JSON 字段
+        for field_name in self._get_json_fields_class():
+            if field_name in result:
+                value = result[field_name]
+                if value is not None:
+                    if isinstance(value, (dict, list)):
+                        result[field_name] = json.dumps(value, ensure_ascii=False)
+                    elif not isinstance(value, str):
+                        result[field_name] = json.dumps(value, ensure_ascii=False)
+        
+        return result
+    
+    @classmethod
+    def from_dict(cls: type[T], data: dict[str, Any]) -> T:
+        """从字典创建实例，自动处理枚举和 JSON 字段"""
+        # 获取有效字段
+        valid_fields = {f.name for f in fields(cls)}  # type: ignore
+        
+        # 过滤数据
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+        
+        # 获取枚举和 JSON 字段配置
+        enum_fields = cls._get_enum_fields_class()
+        json_fields = cls._get_json_fields_class()
+        
+        # 处理枚举字段
+        for field_name, enum_type in enum_fields.items():
+            if field_name in filtered and isinstance(filtered[field_name], str):
+                try:
+                    filtered[field_name] = enum_type(filtered[field_name])
+                except ValueError:
+                    pass  # 保持原值
+        
+        # 处理 JSON 字段
+        for field_name in json_fields:
+            if field_name in filtered and isinstance(filtered[field_name], str):
+                try:
+                    filtered[field_name] = json.loads(filtered[field_name]) if filtered[field_name] else cls._get_json_default(field_name)
+                except json.JSONDecodeError:
+                    pass  # 保持原值
+        
+        return cls(**filtered)  # type: ignore
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        """获取枚举字段（子类需覆盖）"""
+        return {}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        """获取 JSON 字段（子类需覆盖）"""
+        return []
+    
+    @classmethod
+    def _get_json_default(cls, field_name: str) -> Any:
+        """获取 JSON 字段的默认值"""
+        return {} if 'dict' in field_name or field_name in ['headers', 'body', 'query_params', 'metadata', 'variables'] else []
+
+
+# =====================================================
+# 核心业务模型
+# =====================================================
+
 @dataclass
-class TestScenario:
+class AnalysisTask(BaseModel):
+    """分析任务模型"""
+    task_id: str
+    name: str
+    log_file_path: str = ""
+    description: str = ""
+    task_type: TaskType = TaskType.LOG_ANALYSIS
+    log_file_size: int = 0
+    status: TaskStatus = TaskStatus.PENDING
+    total_lines: int = 0
+    processed_lines: int = 0
+    total_requests: int = 0
+    total_test_cases: int = 0
+    error_message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'status': TaskStatus, 'task_type': TaskType}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['metadata']
+
+
+@dataclass
+class ParsedRequestRecord(BaseModel):
+    """解析请求记录模型"""
+    task_id: str
+    request_id: str
+    method: str
+    url: str
+    category: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    body: str | dict | None = None
+    query_params: dict[str, str] = field(default_factory=dict)
+    http_status: int = 0
+    response_time_ms: float = 0
+    response_body: str | None = None
+    has_error: bool = False
+    error_message: str = ""
+    has_warning: bool = False
+    warning_message: str = ""
+    curl_command: str = ""
+    timestamp: str = ""
+    raw_logs: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['headers', 'query_params', 'metadata']
+    
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        # body 特殊处理：可能是字典或字符串
+        if isinstance(result.get('body'), dict):
+            result['body'] = json.dumps(result['body'], ensure_ascii=False)
+        return result
+
+
+# =====================================================
+# 接口管理模型
+# =====================================================
+
+@dataclass
+class ApiTag(BaseModel):
+    """接口标签模型"""
+    name: str
+    description: str = ""
+    color: str = "#1890ff"
+    parent_id: int | None = None
+    sort_order: int = 0
+    is_system: bool = False
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    id: int | None = None
+
+
+@dataclass
+class ApiEndpoint(BaseModel):
+    """接口端点模型"""
+    endpoint_id: str
+    name: str
+    method: str
+    path: str
+    description: str = ""
+    summary: str = ""
+    parameters: list[dict[str, Any]] = field(default_factory=list)
+    request_body: dict[str, Any] = field(default_factory=dict)
+    responses: dict[str, Any] = field(default_factory=dict)
+    security: list[dict[str, Any]] = field(default_factory=list)
+    source_type: EndpointSourceType = EndpointSourceType.MANUAL
+    source_file: str = ""
+    is_deprecated: bool = False
+    tags: list[str] = field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'source_type': EndpointSourceType}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['parameters', 'request_body', 'responses', 'security']
+    
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        # tags 不存储到数据库，通过关联表管理
+        result.pop('tags', None)
+        return result
+
+
+# =====================================================
+# 测试用例模型
+# =====================================================
+
+@dataclass
+class TestCaseRecord(BaseModel):
+    """测试用例记录模型"""
+    case_id: str
+    endpoint_id: str
+    name: str
+    method: str
+    url: str
+    description: str = ""
+    category: TestCaseCategory = TestCaseCategory.NORMAL
+    priority: TestCasePriority = TestCasePriority.MEDIUM
+    headers: dict[str, str] = field(default_factory=dict)
+    body: dict[str, Any] | None = None
+    query_params: dict[str, str] = field(default_factory=dict)
+    expected_status_code: int = 200
+    expected_response: dict[str, Any] = field(default_factory=dict)
+    assertions: list[dict[str, Any]] = field(default_factory=list)
+    max_response_time_ms: int = 3000
+    tags: list[str] = field(default_factory=list)
+    is_enabled: bool = True
+    is_ai_generated: bool = False
+    source_task_id: str = ""
+    version: int = 1
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'category': TestCaseCategory, 'priority': TestCasePriority}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['headers', 'body', 'query_params', 'expected_response', 'assertions', 'tags']
+
+
+@dataclass
+class TestCaseHistory(BaseModel):
+    """测试用例历史记录模型（合并版本和变更日志）"""
+    case_id: str
+    version: int
+    change_type: ChangeType
+    snapshot: dict[str, Any]
+    change_summary: str = ""
+    changed_fields: list[str] = field(default_factory=list)
+    changed_by: str = ""
+    created_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'change_type': ChangeType}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['snapshot', 'changed_fields']
+    
+    @classmethod
+    def from_test_case(
+        cls,
+        test_case: TestCaseRecord,
+        change_type: ChangeType,
+        change_summary: str = "",
+        changed_fields: list[str] | None = None,
+        changed_by: str = ""
+    ) -> Self:
+        """从测试用例创建历史记录"""
+        return cls(
+            case_id=test_case.case_id,
+            version=test_case.version,
+            change_type=change_type,
+            snapshot=test_case.to_dict(),
+            change_summary=change_summary,
+            changed_fields=changed_fields or [],
+            changed_by=changed_by
+        )
+
+
+# =====================================================
+# 测试执行模型
+# =====================================================
+
+@dataclass
+class TestExecution(BaseModel):
+    """测试执行批次模型"""
+    execution_id: str
+    name: str = ""
+    description: str = ""
+    execution_type: ExecutionType = ExecutionType.TEST
+    trigger_type: TriggerType = TriggerType.MANUAL
+    status: ExecutionStatus = ExecutionStatus.PENDING
+    base_url: str = ""
+    environment: str = ""
+    variables: dict[str, Any] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
+    total_cases: int = 0
+    passed_cases: int = 0
+    failed_cases: int = 0
+    error_cases: int = 0
+    skipped_cases: int = 0
+    duration_ms: int = 0
+    error_message: str = ""
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {
+            'execution_type': ExecutionType,
+            'trigger_type': TriggerType,
+            'status': ExecutionStatus
+        }
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['variables', 'headers']
+
+
+@dataclass
+class TestResultRecord(BaseModel):
+    """测试结果记录模型"""
+    case_id: str
+    execution_id: str
+    status: TestResultStatus
+    result_type: ResultType = ResultType.TEST
+    actual_status_code: int = 0
+    actual_response_time_ms: float = 0
+    actual_response_body: str = ""
+    actual_headers: dict[str, str] = field(default_factory=dict)
+    error_message: str = ""
+    assertion_results: list[dict[str, Any]] = field(default_factory=list)
+    ai_analysis: str = ""
+    executed_at: datetime | None = None
+    created_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'status': TestResultStatus, 'result_type': ResultType}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['actual_headers', 'assertion_results']
+
+
+# =====================================================
+# 分析报告模型
+# =====================================================
+
+@dataclass
+class AnalysisReport(BaseModel):
+    """分析报告模型"""
+    task_id: str
+    title: str
+    content: str
+    report_type: ReportType = ReportType.ANALYSIS
+    format: str = "markdown"
+    statistics: dict[str, Any] = field(default_factory=dict)
+    issues: list[dict[str, Any]] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
+    severity: str = "medium"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    id: int | None = None
+    
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'report_type': ReportType}
+    
+    @classmethod
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['statistics', 'issues', 'recommendations', 'metadata']
+
+
+# =====================================================
+# 测试场景模型
+# =====================================================
+
+@dataclass
+class TestScenario(BaseModel):
     """测试场景模型"""
     scenario_id: str
     name: str
@@ -457,34 +562,20 @@ class TestScenario:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     id: int | None = None
-    steps: list["ScenarioStep"] = field(default_factory=list)  # 关联步骤
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['tags'] = json.dumps(self.tags, ensure_ascii=False) if self.tags else '[]'
-        result['variables'] = json.dumps(self.variables, ensure_ascii=False) if self.variables else '{}'
-        result['setup_hooks'] = json.dumps(self.setup_hooks, ensure_ascii=False) if self.setup_hooks else '[]'
-        result['teardown_hooks'] = json.dumps(self.teardown_hooks, ensure_ascii=False) if self.teardown_hooks else '[]'
-        del result['steps']  # 步骤单独存储
-        return result
+    steps: list["ScenarioStep"] = field(default_factory=list)
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'tags' in data and isinstance(data['tags'], str):
-            data['tags'] = json.loads(data['tags']) if data['tags'] else []
-        if 'variables' in data and isinstance(data['variables'], str):
-            data['variables'] = json.loads(data['variables']) if data['variables'] else {}
-        if 'setup_hooks' in data and isinstance(data['setup_hooks'], str):
-            data['setup_hooks'] = json.loads(data['setup_hooks']) if data['setup_hooks'] else []
-        if 'teardown_hooks' in data and isinstance(data['teardown_hooks'], str):
-            data['teardown_hooks'] = json.loads(data['teardown_hooks']) if data['teardown_hooks'] else []
-        if 'steps' not in data:
-            data['steps'] = []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['tags', 'variables', 'setup_hooks', 'teardown_hooks']
+    
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        result.pop('steps', None)  # 步骤单独存储
+        return result
 
 
 @dataclass
-class ScenarioStep:
+class ScenarioStep(BaseModel):
     """场景步骤模型"""
     scenario_id: str
     step_id: str
@@ -509,41 +600,17 @@ class ScenarioStep:
     updated_at: datetime | None = None
     id: int | None = None
     
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['step_type'] = self.step_type.value if isinstance(self.step_type, StepType) else self.step_type
-        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
-        result['body'] = json.dumps(self.body, ensure_ascii=False) if self.body else None
-        result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
-        result['extractions'] = json.dumps(self.extractions, ensure_ascii=False) if self.extractions else '[]'
-        result['assertions'] = json.dumps(self.assertions, ensure_ascii=False) if self.assertions else '[]'
-        result['condition'] = json.dumps(self.condition, ensure_ascii=False) if self.condition else '{}'
-        result['loop_config'] = json.dumps(self.loop_config, ensure_ascii=False) if self.loop_config else '{}'
-        return result
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'step_type': StepType}
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'step_type' in data and isinstance(data['step_type'], str):
-            data['step_type'] = StepType(data['step_type'])
-        if 'headers' in data and isinstance(data['headers'], str):
-            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
-        if 'body' in data and isinstance(data['body'], str):
-            data['body'] = json.loads(data['body']) if data['body'] else None
-        if 'query_params' in data and isinstance(data['query_params'], str):
-            data['query_params'] = json.loads(data['query_params']) if data['query_params'] else {}
-        if 'extractions' in data and isinstance(data['extractions'], str):
-            data['extractions'] = json.loads(data['extractions']) if data['extractions'] else []
-        if 'assertions' in data and isinstance(data['assertions'], str):
-            data['assertions'] = json.loads(data['assertions']) if data['assertions'] else []
-        if 'condition' in data and isinstance(data['condition'], str):
-            data['condition'] = json.loads(data['condition']) if data['condition'] else {}
-        if 'loop_config' in data and isinstance(data['loop_config'], str):
-            data['loop_config'] = json.loads(data['loop_config']) if data['loop_config'] else {}
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['headers', 'body', 'query_params', 'extractions', 'assertions', 'condition', 'loop_config']
 
 
 @dataclass
-class ScenarioExecution:
+class ScenarioExecution(BaseModel):
     """场景执行记录模型"""
     execution_id: str
     scenario_id: str
@@ -563,26 +630,17 @@ class ScenarioExecution:
     created_at: datetime | None = None
     id: int | None = None
     
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['trigger_type'] = self.trigger_type.value if isinstance(self.trigger_type, TriggerType) else self.trigger_type
-        result['status'] = self.status.value if isinstance(self.status, ScenarioStatus) else self.status
-        result['variables'] = json.dumps(self.variables, ensure_ascii=False) if self.variables else '{}'
-        return result
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'trigger_type': TriggerType, 'status': ScenarioStatus}
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'trigger_type' in data and isinstance(data['trigger_type'], str):
-            data['trigger_type'] = TriggerType(data['trigger_type'])
-        if 'status' in data and isinstance(data['status'], str):
-            data['status'] = ScenarioStatus(data['status'])
-        if 'variables' in data and isinstance(data['variables'], str):
-            data['variables'] = json.loads(data['variables']) if data['variables'] else {}
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['variables']
 
 
 @dataclass
-class StepResult:
+class StepResult(BaseModel):
     """步骤执行结果模型"""
     execution_id: str
     step_id: str
@@ -601,245 +659,109 @@ class StepResult:
     executed_at: datetime | None = None
     id: int | None = None
     
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['status'] = self.status.value if isinstance(self.status, TestResultStatus) else self.status
-        result['request_headers'] = json.dumps(self.request_headers, ensure_ascii=False) if self.request_headers else '{}'
-        result['response_headers'] = json.dumps(self.response_headers, ensure_ascii=False) if self.response_headers else '{}'
-        result['extracted_variables'] = json.dumps(self.extracted_variables, ensure_ascii=False) if self.extracted_variables else '{}'
-        result['assertion_results'] = json.dumps(self.assertion_results, ensure_ascii=False) if self.assertion_results else '[]'
-        return result
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'status': TestResultStatus}
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'status' in data and isinstance(data['status'], str):
-            data['status'] = TestResultStatus(data['status'])
-        if 'request_headers' in data and isinstance(data['request_headers'], str):
-            data['request_headers'] = json.loads(data['request_headers']) if data['request_headers'] else {}
-        if 'response_headers' in data and isinstance(data['response_headers'], str):
-            data['response_headers'] = json.loads(data['response_headers']) if data['response_headers'] else {}
-        if 'extracted_variables' in data and isinstance(data['extracted_variables'], str):
-            data['extracted_variables'] = json.loads(data['extracted_variables']) if data['extracted_variables'] else {}
-        if 'assertion_results' in data and isinstance(data['assertion_results'], str):
-            data['assertion_results'] = json.loads(data['assertion_results']) if data['assertion_results'] else []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['request_headers', 'response_headers', 'extracted_variables', 'assertion_results']
 
+
+# =====================================================
+# 知识库模型
+# 该文件内容使用AI生成，注意识别准确性
+# =====================================================
 
 @dataclass
-class ScheduledTask:
-    """定时任务模型
-    
-    支持按测试用例或接口维度执行定时测试。
-    """
-    task_id: str
-    name: str
-    cron_expression: str
-    description: str = ""
-    # 执行范围：可以指定测试用例ID列表或接口ID列表
-    case_ids: list[str] = field(default_factory=list)  # 要执行的测试用例ID
-    endpoint_ids: list[str] = field(default_factory=list)  # 要执行的接口ID（执行该接口下所有用例）
-    tag_names: list[str] = field(default_factory=list)  # 按标签筛选
-    # 执行配置
-    base_url: str = ""
-    environment: str = ""
-    variables: dict[str, Any] = field(default_factory=dict)
-    headers: dict[str, str] = field(default_factory=dict)  # 全局请求头
-    # 通知配置
-    notify_on_failure: bool = True
-    notify_channels: list[str] = field(default_factory=list)  # 通知渠道：email/webhook/etc
-    notify_config: dict[str, Any] = field(default_factory=dict)  # 通知配置
-    # 状态
-    is_enabled: bool = True
-    last_run_at: datetime | None = None
-    last_run_status: str = ""  # 上次执行状态
-    next_run_at: datetime | None = None
-    run_count: int = 0  # 执行次数
-    success_count: int = 0  # 成功次数
-    failure_count: int = 0  # 失败次数
+class KnowledgeEntry(BaseModel):
+    """知识条目模型"""
+    knowledge_id: str
+    title: str
+    content: str
+    type: KnowledgeType = KnowledgeType.PROJECT_CONFIG
+    category: str = ""
+    scope: str = ""
+    priority: int = 0
+    status: KnowledgeStatus = KnowledgeStatus.ACTIVE
+    source: KnowledgeSource = KnowledgeSource.MANUAL
+    source_ref: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    created_by: str = ""
+    version: int = 1
     id: int | None = None
     
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['case_ids'] = json.dumps(self.case_ids, ensure_ascii=False) if self.case_ids else '[]'
-        result['endpoint_ids'] = json.dumps(self.endpoint_ids, ensure_ascii=False) if self.endpoint_ids else '[]'
-        result['tag_names'] = json.dumps(self.tag_names, ensure_ascii=False) if self.tag_names else '[]'
-        result['variables'] = json.dumps(self.variables, ensure_ascii=False) if self.variables else '{}'
-        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
-        result['notify_channels'] = json.dumps(self.notify_channels, ensure_ascii=False) if self.notify_channels else '[]'
-        result['notify_config'] = json.dumps(self.notify_config, ensure_ascii=False) if self.notify_config else '{}'
-        return result
+    @classmethod
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {
+            'type': KnowledgeType,
+            'status': KnowledgeStatus,
+            'source': KnowledgeSource
+        }
     
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'case_ids' in data and isinstance(data['case_ids'], str):
-            data['case_ids'] = json.loads(data['case_ids']) if data['case_ids'] else []
-        if 'endpoint_ids' in data and isinstance(data['endpoint_ids'], str):
-            data['endpoint_ids'] = json.loads(data['endpoint_ids']) if data['endpoint_ids'] else []
-        if 'tag_names' in data and isinstance(data['tag_names'], str):
-            data['tag_names'] = json.loads(data['tag_names']) if data['tag_names'] else []
-        if 'variables' in data and isinstance(data['variables'], str):
-            data['variables'] = json.loads(data['variables']) if data['variables'] else {}
-        if 'headers' in data and isinstance(data['headers'], str):
-            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
-        if 'notify_channels' in data and isinstance(data['notify_channels'], str):
-            data['notify_channels'] = json.loads(data['notify_channels']) if data['notify_channels'] else []
-        if 'notify_config' in data and isinstance(data['notify_config'], str):
-            data['notify_config'] = json.loads(data['notify_config']) if data['notify_config'] else {}
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-# =====================================================
-# 测试用例版本管理模型
-# =====================================================
-
-class ChangeType(Enum):
-    """变更类型"""
-    CREATE = "create"
-    UPDATE = "update"
-    DELETE = "delete"
-    RESTORE = "restore"
-    ENABLE = "enable"
-    DISABLE = "disable"
+    def _get_json_fields_class(cls) -> list[str]:
+        return ['metadata']
+    
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        # tags 不存储到主表，通过关联表管理
+        result.pop('tags', None)
+        return result
 
 
 @dataclass
-class TestCaseVersion:
-    """测试用例版本模型"""
-    version_id: str
-    case_id: str
-    endpoint_id: str
-    version_number: int
-    name: str
-    method: str
-    url: str
-    description: str = ""
-    category: TestCaseCategory = TestCaseCategory.NORMAL
-    priority: TestCasePriority = TestCasePriority.MEDIUM
-    headers: dict[str, str] = field(default_factory=dict)
-    body: dict[str, Any] | None = None
-    query_params: dict[str, str] = field(default_factory=dict)
-    expected_status_code: int = 200
-    expected_response: dict[str, Any] = field(default_factory=dict)
-    assertions: list[dict[str, Any]] = field(default_factory=list)
-    max_response_time_ms: int = 3000
-    tags: list[str] = field(default_factory=list)
-    change_type: ChangeType = ChangeType.CREATE
-    change_summary: str = ""
-    changed_fields: list[str] = field(default_factory=list)
-    changed_by: str = ""
-    created_at: datetime | None = None
-    id: int | None = None
-    
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['category'] = self.category.value if isinstance(self.category, TestCaseCategory) else self.category
-        result['priority'] = self.priority.value if isinstance(self.priority, TestCasePriority) else self.priority
-        result['change_type'] = self.change_type.value if isinstance(self.change_type, ChangeType) else self.change_type
-        # JSON字段序列化
-        result['headers'] = json.dumps(self.headers, ensure_ascii=False) if self.headers else '{}'
-        result['body'] = json.dumps(self.body, ensure_ascii=False) if self.body else None
-        result['query_params'] = json.dumps(self.query_params, ensure_ascii=False) if self.query_params else '{}'
-        result['expected_response'] = json.dumps(self.expected_response, ensure_ascii=False) if self.expected_response else '{}'
-        result['assertions'] = json.dumps(self.assertions, ensure_ascii=False) if self.assertions else '[]'
-        result['tags'] = json.dumps(self.tags, ensure_ascii=False) if self.tags else '[]'
-        result['changed_fields'] = json.dumps(self.changed_fields, ensure_ascii=False) if self.changed_fields else '[]'
-        return result
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        # 枚举字段转换
-        if 'category' in data and isinstance(data['category'], str):
-            data['category'] = TestCaseCategory(data['category'])
-        if 'priority' in data and isinstance(data['priority'], str):
-            data['priority'] = TestCasePriority(data['priority'])
-        if 'change_type' in data and isinstance(data['change_type'], str):
-            data['change_type'] = ChangeType(data['change_type'])
-        # JSON字段反序列化
-        if 'headers' in data and isinstance(data['headers'], str):
-            data['headers'] = json.loads(data['headers']) if data['headers'] else {}
-        if 'body' in data and isinstance(data['body'], str):
-            data['body'] = json.loads(data['body']) if data['body'] else None
-        if 'query_params' in data and isinstance(data['query_params'], str):
-            data['query_params'] = json.loads(data['query_params']) if data['query_params'] else {}
-        if 'expected_response' in data and isinstance(data['expected_response'], str):
-            data['expected_response'] = json.loads(data['expected_response']) if data['expected_response'] else {}
-        if 'assertions' in data and isinstance(data['assertions'], str):
-            data['assertions'] = json.loads(data['assertions']) if data['assertions'] else []
-        if 'tags' in data and isinstance(data['tags'], str):
-            data['tags'] = json.loads(data['tags']) if data['tags'] else []
-        if 'changed_fields' in data and isinstance(data['changed_fields'], str):
-            data['changed_fields'] = json.loads(data['changed_fields']) if data['changed_fields'] else []
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-    
-    @classmethod
-    def from_test_case(
-        cls,
-        test_case: TestCaseRecord,
-        version_id: str,
-        version_number: int,
-        change_type: ChangeType,
-        change_summary: str = "",
-        changed_fields: list[str] | None = None,
-        changed_by: str = ""
-    ) -> Self:
-        """从测试用例创建版本"""
-        return cls(
-            version_id=version_id,
-            case_id=test_case.case_id,
-            endpoint_id=test_case.endpoint_id,
-            version_number=version_number,
-            name=test_case.name,
-            description=test_case.description,
-            category=test_case.category,
-            priority=test_case.priority,
-            method=test_case.method,
-            url=test_case.url,
-            headers=test_case.headers,
-            body=test_case.body,
-            query_params=test_case.query_params,
-            expected_status_code=test_case.expected_status_code,
-            expected_response=test_case.expected_response,
-            assertions=test_case.assertions,
-            max_response_time_ms=test_case.max_response_time_ms,
-            tags=test_case.tags,
-            change_type=change_type,
-            change_summary=change_summary,
-            changed_fields=changed_fields or [],
-            changed_by=changed_by
-        )
-
-
-@dataclass
-class TestCaseChangeLog:
-    """测试用例变更日志模型"""
-    case_id: str
-    endpoint_id: str
-    version_id: str
+class KnowledgeHistory(BaseModel):
+    """知识版本历史模型"""
+    knowledge_id: str
+    version: int
+    content: str
+    title: str
     change_type: ChangeType
-    change_summary: str = ""
-    old_value: dict[str, Any] = field(default_factory=dict)
-    new_value: dict[str, Any] = field(default_factory=dict)
     changed_by: str = ""
-    ip_address: str = ""
-    user_agent: str = ""
-    created_at: datetime | None = None
+    changed_at: datetime | None = None
     id: int | None = None
     
-    def to_dict(self) -> dict[str, Any]:
-        result = asdict(self)
-        result['change_type'] = self.change_type.value if isinstance(self.change_type, ChangeType) else self.change_type
-        result['old_value'] = json.dumps(self.old_value, ensure_ascii=False) if self.old_value else '{}'
-        result['new_value'] = json.dumps(self.new_value, ensure_ascii=False) if self.new_value else '{}'
-        return result
-    
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        if 'change_type' in data and isinstance(data['change_type'], str):
-            data['change_type'] = ChangeType(data['change_type'])
-        if 'old_value' in data and isinstance(data['old_value'], str):
-            data['old_value'] = json.loads(data['old_value']) if data['old_value'] else {}
-        if 'new_value' in data and isinstance(data['new_value'], str):
-            data['new_value'] = json.loads(data['new_value']) if data['new_value'] else {}
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+    def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
+        return {'change_type': ChangeType}
+
+
+@dataclass
+class KnowledgeUsage(BaseModel):
+    """知识使用记录模型"""
+    usage_id: str
+    knowledge_id: str
+    used_in: str
+    context: str = ""
+    helpful: int = 0  # 1有帮助, 0未评价, -1无帮助
+    used_at: datetime | None = None
+    id: int | None = None
+
+
+# =====================================================
+# 兼容性别名（保持向后兼容）
+# =====================================================
+
+# 已移除的模型，保留空类以防止导入错误
+# 实际使用时应该迁移到新模型
+
+class ScheduledTask:
+    """已废弃：定时任务模型（功能已移除）"""
+    def __init__(self, *args, **kwargs):
+        raise DeprecationWarning("ScheduledTask 已废弃，请使用外部调度系统")
+
+
+class TestCaseVersion:
+    """已废弃：测试用例版本模型（已合并到 TestCaseHistory）"""
+    def __init__(self, *args, **kwargs):
+        raise DeprecationWarning("TestCaseVersion 已废弃，请使用 TestCaseHistory")
+
+
+class TestCaseChangeLog:
+    """已废弃：测试用例变更日志模型（已合并到 TestCaseHistory）"""
+    def __init__(self, *args, **kwargs):
+        raise DeprecationWarning("TestCaseChangeLog 已废弃，请使用 TestCaseHistory")

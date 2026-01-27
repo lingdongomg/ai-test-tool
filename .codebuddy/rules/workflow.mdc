@@ -1,0 +1,48 @@
+---
+alwaysApply: true
+---
+# Agent 工作流状态机 (Finite State Machine)
+
+每次用户请求，均需要判断当前处理哪一个阶段（RequirementAnalysis\TechnicalDesign\Implementation\Archiving），
+严格按照规定的流程顺序，如果有违反需获取用户反馈，收到用户明确提示后，才可以转入该步骤
+
+## 状态流转指令说明
+
+1.  **需求分析 (RequirementAnalysis)**
+    *   **Trigger**: 根据给定的TAPD链接，分析需求内容
+    *   **Action**: 执行 `@commands/analyze_tapd.md` 分析需求，存储在`@tapd_analyze/{需求名}.md`
+    *   **Transition**: 需求确认后 -> **TechnicalDesign**。
+
+2.  **方案设计 (TechnicalDesign)**
+    *   **Trigger**: 需求分析完成，根据内容生成提案
+    *   **Action**: 
+        *   必须：收集被影响的服务，检查服务根目录下，是否存在`project.md`，没有则询问用户是否执行`@commands/init_project.md`生成动作。
+        *   调用 `/openspec-proposal`生产对应需求提案。如果计划涉及搭建服务, 同时必须使用`@commands/create-trpc-go-project.md`来创建（要求用户提供协议地址，不需要AGENT定义协议）。
+    *   **Check**: 必须通过 `openspec validate` 校验。
+    *   **Rollback**: 若发现需求问题，可随时回退至 **RequirementAnalysis**。
+
+3.  **实施开发 (Implementation)**
+    *   **Trigger**: 提案内容通过，进行编码实现
+    *   **Action**: 
+        *   检查是否涉及新建服务，涉及新建服务必须使用`@commands/create-trpc-go-project.md`来创建，且要求用户提供格式如`git.woa.com/trpcprotocol/xxxxxx/xxxxxx`的协议地址。
+        *   调用 `/openspec-apply`，对提案内容进行编码实现，每个步骤执行完成后，均需要获取用户反馈
+    *   **Rollback**: 若开发中发现重大需求偏差，可回退至 **RequirementAnalysis**。
+
+4.  **归档验收 (Archiving)**
+    *   **Trigger**: 需求完成，将需求文档进行归档
+    *   **Action**: 
+        *   调用 `/update_spec`, 修改被影响服务的spec.md
+        *   调用 `/openspec-archive`。同时将`@tapd_analyze/{需求名}.md`的文件移动到openspec建立的对应归档文件夹下
+    *   **Constraint**: 进入此状态后不可回退，标志着单次变更闭环。
+
+## 全局执行约束
+
+- **产出控制**：除非明确要求，否则**严禁**生成任何额外文档。
+
+- **语言规范**：所有文档内容**必须**使用中文描述。
+
+- **交互确认**：，每完成To-dos里的一个大步骤（阶段）（Major Step），**必须获取用户反馈**。
+    - **执行逻辑**：完成 `1.*` 所有子任务 **暂停并询问** 用户确认 开始 `2.*` 任务。
+    - **示例话术**：“已完成 `1. 数据库设计` 的所有子任务，请确认效果。确认无误后，我将开始执行 `2. 接口开发`。”
+
+- **文件标记**：生成内容时（包括全新生成和修改），**必须**根据文件类型在顶部添加注释：`该文件内容使用AI生成，注意识别准确性`。

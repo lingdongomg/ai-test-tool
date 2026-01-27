@@ -2,6 +2,8 @@
 智能测试用例生成器
 基于日志样例自动生成测试用例
 Python 3.13+ 兼容
+
+该文件内容使用AI生成，注意识别准确性
 """
 
 import json
@@ -11,8 +13,15 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 
 from ..parser.log_parser import ParsedRequest
-from ..llm.chains import TestCaseGeneratorChain
+from ..llm.chains import TestCaseGeneratorChain, KnowledgeEnhancedTestGeneratorChain
 from ..utils.logger import get_logger
+
+# 知识库集成（可选依赖）
+try:
+    from ..knowledge import KnowledgeRetriever, RAGContextBuilder, get_knowledge_store
+    KNOWLEDGE_ENABLED = True
+except ImportError:
+    KNOWLEDGE_ENABLED = False
 
 
 class TestCaseCategory(Enum):
@@ -105,11 +114,37 @@ class TestCase:
 class TestCaseGenerator:
     """智能测试用例生成器"""
     
-    def __init__(self, llm_chain: TestCaseGeneratorChain | None = None, verbose: bool = False) -> None:
+    def __init__(
+        self, 
+        llm_chain: TestCaseGeneratorChain | None = None, 
+        verbose: bool = False,
+        enable_knowledge: bool = True
+    ) -> None:
         self.llm_chain = llm_chain
         self.verbose = verbose
         self.logger = get_logger(verbose)
         self._case_counter = 0
+        
+        # 知识库集成
+        self._knowledge_enabled = enable_knowledge and KNOWLEDGE_ENABLED
+        self._knowledge_retriever: Any = None
+        self._rag_builder: Any = None
+        self._knowledge_chain: KnowledgeEnhancedTestGeneratorChain | None = None
+        
+        if self._knowledge_enabled:
+            self._init_knowledge_components()
+    
+    def _init_knowledge_components(self) -> None:
+        """初始化知识库组件"""
+        try:
+            store = get_knowledge_store()
+            self._knowledge_retriever = KnowledgeRetriever(store)
+            self._rag_builder = RAGContextBuilder(self._knowledge_retriever)
+            self._knowledge_chain = KnowledgeEnhancedTestGeneratorChain(verbose=self.verbose)
+            self.logger.info("知识库组件初始化成功")
+        except Exception as e:
+            self.logger.warn(f"知识库组件初始化失败: {e}")
+            self._knowledge_enabled = False
     
     def generate_from_requests(
         self,
@@ -446,58 +481,158 @@ class TestCaseGenerator:
         sample_bodies: list[dict[str, Any]],
         test_strategy: str
     ) -> list[TestCase]:
-        """使用LLM生成测试用例"""
+        """使用LLM生成测试用例（带知识库增强）"""
         try:
-            self.logger.ai_start("LLM测试用例生成", f"{method} {url}")
+            # 尝试使用知识增强的LLM生成
+            if self._knowledge_enabled and self._knowledge_chain and self._rag_builder:
+                return self._generate_knowledge_enhanced_cases(
+                    method, url, headers, sample_bodies, test_strategy
+                )
             
-            api_info = {
-                "method": method,
-                "url": url,
-                "headers": headers,
-                "sample_bodies": sample_bodies
-            }
-            
-            sample_requests = [
-                {"method": method, "url": url, "body": body}
-                for body in sample_bodies
-            ]
-            
-            result = self.llm_chain.generate_test_cases(
-                api_info=api_info,
-                sample_requests=sample_requests,
-                test_strategy=test_strategy
+            # 降级到普通LLM生成
+            return self._generate_basic_llm_cases(
+                method, url, headers, sample_bodies, test_strategy
             )
-            
-            cases: list[TestCase] = []
-            for tc_data in result.get("test_cases", []):
-                try:
-                    self._case_counter += 1
-                    case = TestCase(
-                        id=f"TC{self._case_counter:04d}",
-                        name=tc_data.get("name", "LLM生成用例"),
-                        description=tc_data.get("description", ""),
-                        category=TestCaseCategory(tc_data.get("category", "normal")),
-                        priority=TestCasePriority(tc_data.get("priority", "medium")),
-                        method=tc_data.get("request", {}).get("method", method),
-                        url=tc_data.get("request", {}).get("url", url),
-                        headers=tc_data.get("request", {}).get("headers", headers),
-                        body=tc_data.get("request", {}).get("body"),
-                        expected=ExpectedResult(
-                            status_code=tc_data.get("expected", {}).get("status_code", 200),
-                            max_response_time_ms=tc_data.get("expected", {}).get("max_response_time_ms", 3000)
-                        ),
-                        tags=["llm-generated"]
-                    )
-                    cases.append(case)
-                except Exception:
-                    continue
-            
-            self.logger.ai_end(f"生成 {len(cases)} 个用例")
-            return cases[:5]  # 限制LLM生成的数量
             
         except Exception as e:
             self.logger.error(f"LLM生成测试用例失败: {e}")
             return []
+    
+    def _generate_knowledge_enhanced_cases(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        sample_bodies: list[dict[str, Any]],
+        test_strategy: str
+    ) -> list[TestCase]:
+        """使用知识库增强的LLM生成测试用例"""
+        self.logger.ai_start("知识增强测试用例生成", f"{method} {url}")
+        
+        # 构建API信息
+        api_info = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "sample_bodies": sample_bodies
+        }
+        
+        sample_requests = [
+            {"method": method, "url": url, "body": body}
+            for body in sample_bodies
+        ]
+        
+        # 构建RAG上下文
+        query = f"{method} {url} 接口测试"
+        knowledge_context = self._rag_builder.build_context(
+            query=query,
+            scope=url,
+            max_entries=10
+        )
+        
+        if knowledge_context:
+            self.logger.info(f"检索到相关知识，构建RAG上下文")
+        
+        # 使用知识增强的Chain生成
+        result = self._knowledge_chain.generate_test_cases(
+            api_info=api_info,
+            sample_requests=sample_requests,
+            knowledge_context=knowledge_context or "无特定知识库信息",
+            test_strategy=test_strategy
+        )
+        
+        cases = self._parse_llm_test_cases(result, method, url, headers)
+        
+        # 记录知识使用情况
+        if knowledge_context and cases:
+            self._record_knowledge_usage(url, len(cases))
+        
+        self.logger.ai_end(f"生成 {len(cases)} 个知识增强用例")
+        return cases[:5]
+    
+    def _generate_basic_llm_cases(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        sample_bodies: list[dict[str, Any]],
+        test_strategy: str
+    ) -> list[TestCase]:
+        """使用基础LLM生成测试用例"""
+        self.logger.ai_start("LLM测试用例生成", f"{method} {url}")
+        
+        api_info = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "sample_bodies": sample_bodies
+        }
+        
+        sample_requests = [
+            {"method": method, "url": url, "body": body}
+            for body in sample_bodies
+        ]
+        
+        result = self.llm_chain.generate_test_cases(
+            api_info=api_info,
+            sample_requests=sample_requests,
+            test_strategy=test_strategy
+        )
+        
+        cases = self._parse_llm_test_cases(result, method, url, headers)
+        
+        self.logger.ai_end(f"生成 {len(cases)} 个用例")
+        return cases[:5]
+    
+    def _parse_llm_test_cases(
+        self,
+        result: dict[str, Any],
+        method: str,
+        url: str,
+        headers: dict[str, str]
+    ) -> list[TestCase]:
+        """解析LLM返回的测试用例"""
+        cases: list[TestCase] = []
+        
+        for tc_data in result.get("test_cases", []):
+            try:
+                self._case_counter += 1
+                
+                # 处理知识增强生成的格式
+                request_data = tc_data.get("request", tc_data)
+                expected_data = tc_data.get("expected", {})
+                
+                case = TestCase(
+                    id=f"TC{self._case_counter:04d}",
+                    name=tc_data.get("name", "LLM生成用例"),
+                    description=tc_data.get("description", ""),
+                    category=TestCaseCategory(tc_data.get("category", "normal")),
+                    priority=TestCasePriority(tc_data.get("priority", "medium")),
+                    method=request_data.get("method", method),
+                    url=request_data.get("url", url),
+                    headers=request_data.get("headers", tc_data.get("headers", headers)),
+                    body=request_data.get("body", tc_data.get("body")),
+                    query_params=request_data.get("query_params", tc_data.get("query_params", {})),
+                    expected=ExpectedResult(
+                        status_code=expected_data.get("status_code", tc_data.get("expected_status", 200)),
+                        max_response_time_ms=expected_data.get("max_response_time_ms", 3000)
+                    ),
+                    tags=["llm-generated"] + tc_data.get("knowledge_applied", [])
+                )
+                cases.append(case)
+            except Exception:
+                continue
+        
+        return cases
+    
+    def _record_knowledge_usage(self, scope: str, case_count: int) -> None:
+        """记录知识使用情况（用于反馈优化）"""
+        try:
+            if self._knowledge_retriever:
+                # 简单记录，后续可扩展为详细的使用追踪
+                self.logger.debug(f"知识库使用: scope={scope}, generated_cases={case_count}")
+        except Exception:
+            pass
     
     def _extract_endpoint_name(self, url: str) -> str:
         """从URL提取接口名称"""

@@ -1,3 +1,4 @@
+# 该文件内容使用AI生成，注意识别准确性
 """
 LLM提供商抽象层
 支持多种LLM后端：Ollama、OpenAI、Azure、Anthropic等
@@ -7,7 +8,7 @@ Python 3.13+ 兼容
 from abc import ABC, abstractmethod
 from typing import Any
 from langchain_core.language_models import BaseLLM
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
 
 from ..config import LLMConfig, get_config
 
@@ -22,7 +23,6 @@ def _setup_langchain_debug(debug: bool) -> None:
             import logging
             logging.getLogger("langchain").setLevel(logging.DEBUG)
     except ImportError:
-        # 旧版本LangChain兼容
         try:
             import langchain
             langchain.debug = debug
@@ -31,8 +31,29 @@ def _setup_langchain_debug(debug: bool) -> None:
             pass
 
 
+def _convert_messages(messages: list[dict[str, str]]) -> list[BaseMessage]:
+    """将字典格式消息转换为LangChain消息对象"""
+    result: list[BaseMessage] = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            result.append(SystemMessage(content=content))
+        elif role == "assistant":
+            result.append(AIMessage(content=content))
+        else:
+            result.append(HumanMessage(content=content))
+    return result
+
+
 class LLMProvider(ABC):
     """LLM提供商抽象基类"""
+    
+    def __init__(self, config: LLMConfig) -> None:
+        self.config = config
+        self._llm: Any = None
+        self._chat_model: Any = None
+        _setup_langchain_debug(config.debug)
     
     @abstractmethod
     def get_llm(self) -> BaseLLM:
@@ -40,28 +61,26 @@ class LLMProvider(ABC):
         ...
     
     @abstractmethod
-    def generate(self, prompt: str, **kwargs: Any) -> str:
-        """生成文本"""
+    def get_chat_model(self) -> Any:
+        """获取Chat模型"""
         ...
     
-    @abstractmethod
+    def generate(self, prompt: str, **kwargs: Any) -> str:
+        """生成文本"""
+        llm = self.get_llm()
+        return llm.invoke(prompt)
+    
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
-        """聊天对话"""
-        ...
+        """聊天对话（所有Provider通用）"""
+        chat_model = self.get_chat_model()
+        response = chat_model.invoke(_convert_messages(messages))
+        return response.content
 
 
 class OllamaProvider(LLMProvider):
     """Ollama本地模型提供商"""
     
-    def __init__(self, config: LLMConfig) -> None:
-        self.config = config
-        self._llm: Any = None
-        self._chat_model: Any = None
-        # 设置LangChain调试模式
-        _setup_langchain_debug(config.debug)
-    
     def get_llm(self) -> Any:
-        """获取Ollama LLM实例"""
         if self._llm is None:
             try:
                 from langchain_ollama import OllamaLLM
@@ -76,7 +95,6 @@ class OllamaProvider(LLMProvider):
         return self._llm
     
     def get_chat_model(self) -> Any:
-        """获取Ollama Chat模型"""
         if self._chat_model is None:
             try:
                 from langchain_ollama import ChatOllama
@@ -89,44 +107,12 @@ class OllamaProvider(LLMProvider):
             except ImportError as e:
                 raise ImportError("请安装 langchain-ollama: pip install langchain-ollama") from e
         return self._chat_model
-    
-    def generate(self, prompt: str, **kwargs: Any) -> str:
-        """生成文本"""
-        llm = self.get_llm()
-        return llm.invoke(prompt)
-    
-    def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
-        """聊天对话"""
-        chat_model = self.get_chat_model()
-        
-        langchain_messages = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "system":
-                langchain_messages.append(SystemMessage(content=content))
-            elif role == "assistant":
-                langchain_messages.append(AIMessage(content=content))
-            else:
-                langchain_messages.append(HumanMessage(content=content))
-        
-        response = chat_model.invoke(langchain_messages)
-        return response.content
 
 
 class OpenAIProvider(LLMProvider):
     """OpenAI API提供商"""
     
-    def __init__(self, config: LLMConfig) -> None:
-        self.config = config
-        self._llm: Any = None
-        self._chat_model: Any = None
-        # 设置LangChain调试模式
-        _setup_langchain_debug(config.debug)
-    
     def get_llm(self) -> Any:
-        """获取OpenAI LLM实例"""
         if self._llm is None:
             try:
                 from langchain_openai import OpenAI
@@ -142,7 +128,6 @@ class OpenAIProvider(LLMProvider):
         return self._llm
     
     def get_chat_model(self) -> Any:
-        """获取OpenAI Chat模型"""
         if self._chat_model is None:
             try:
                 from langchain_openai import ChatOpenAI
@@ -156,47 +141,16 @@ class OpenAIProvider(LLMProvider):
             except ImportError as e:
                 raise ImportError("请安装 langchain-openai: pip install langchain-openai") from e
         return self._chat_model
-    
-    def generate(self, prompt: str, **kwargs: Any) -> str:
-        """生成文本"""
-        llm = self.get_llm()
-        return llm.invoke(prompt)
-    
-    def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
-        """聊天对话"""
-        chat_model = self.get_chat_model()
-        
-        langchain_messages = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "system":
-                langchain_messages.append(SystemMessage(content=content))
-            elif role == "assistant":
-                langchain_messages.append(AIMessage(content=content))
-            else:
-                langchain_messages.append(HumanMessage(content=content))
-        
-        response = chat_model.invoke(langchain_messages)
-        return response.content
 
 
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude API提供商"""
-    
-    def __init__(self, config: LLMConfig) -> None:
-        self.config = config
-        self._chat_model: Any = None
-        # 设置LangChain调试模式
-        _setup_langchain_debug(config.debug)
     
     def get_llm(self) -> Any:
         """Claude主要使用Chat接口"""
         return self.get_chat_model()
     
     def get_chat_model(self) -> Any:
-        """获取Claude Chat模型"""
         if self._chat_model is None:
             try:
                 from langchain_anthropic import ChatAnthropic
@@ -211,27 +165,8 @@ class AnthropicProvider(LLMProvider):
         return self._chat_model
     
     def generate(self, prompt: str, **kwargs: Any) -> str:
-        """生成文本"""
+        """Claude使用chat接口生成"""
         return self.chat([{"role": "user", "content": prompt}], **kwargs)
-    
-    def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
-        """聊天对话"""
-        chat_model = self.get_chat_model()
-        
-        langchain_messages = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "system":
-                langchain_messages.append(SystemMessage(content=content))
-            elif role == "assistant":
-                langchain_messages.append(AIMessage(content=content))
-            else:
-                langchain_messages.append(HumanMessage(content=content))
-        
-        response = chat_model.invoke(langchain_messages)
-        return response.content
 
 
 # 提供商注册表

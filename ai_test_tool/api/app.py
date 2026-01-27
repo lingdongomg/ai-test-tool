@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks
+from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge
 
 
 def setup_logging() -> logging.Logger:
@@ -111,6 +111,8 @@ def create_app() -> FastAPI:
     app.include_router(imports.router, prefix="/api/v2/imports", tags=["文档导入"])
     # 分析任务（日志解析相关）
     app.include_router(tasks.router, prefix="/api/v2/tasks", tags=["分析任务"])
+    # 知识库管理
+    app.include_router(knowledge.router, prefix="/api/v2/knowledge", tags=["知识库"])
     
     @app.get("/", tags=["健康检查"])
     async def root():

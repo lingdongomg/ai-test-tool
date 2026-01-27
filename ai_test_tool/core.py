@@ -2,6 +2,8 @@
 AI Test Tool 核心模块
 整合所有功能的主要入口
 Python 3.13+ 兼容
+
+该文件内容使用AI生成，注意识别准确性
 """
 
 import os
@@ -33,6 +35,17 @@ from .database import (
     AnalysisReport, ReportType
 )
 
+# 知识库相关导入（可选依赖）
+KNOWLEDGE_ENABLED = False
+KnowledgeLearner: Any = None
+get_knowledge_store: Any = None
+
+try:
+    from .knowledge import KnowledgeLearner, get_knowledge_store
+    KNOWLEDGE_ENABLED = True
+except ImportError:
+    pass
+
 
 class TaskCancelledException(Exception):
     """任务被取消异常"""
@@ -57,7 +70,8 @@ class AITestTool:
         config: AppConfig | None = None,
         verbose: bool = False,
         log_dir: str | None = None,
-        cancel_check_fn: Callable[[], bool] | None = None
+        cancel_check_fn: Callable[[], bool] | None = None,
+        enable_knowledge_learning: bool = True
     ) -> None:
         """
         初始化AI测试工具
@@ -67,12 +81,14 @@ class AITestTool:
             verbose: 是否显示详细的AI处理日志
             log_dir: 日志文件目录，默认为项目根目录下的 logs 目录
             cancel_check_fn: 取消检查函数，返回True表示任务已取消
+            enable_knowledge_learning: 是否启用知识学习功能
         """
         self.config = config or get_config()
         set_config(self.config)
         
         self.verbose = verbose
         self._cancel_check_fn = cancel_check_fn
+        self._enable_knowledge_learning = enable_knowledge_learning and KNOWLEDGE_ENABLED
         
         # 初始化日志器
         self.logger = AILogger(verbose=verbose, name="ai_analysis", log_dir=log_dir)
@@ -83,6 +99,9 @@ class AITestTool:
         
         # 初始化数据库（必须）
         self._init_database()
+        
+        # 初始化知识库（可选）
+        self._init_knowledge()
         
         # 存储处理结果
         self.parsed_requests: list[ParsedRequest] = []
@@ -134,6 +153,21 @@ class AITestTool:
         except Exception as e:
             self.logger.error(f"数据库连接失败: {e}")
             raise RuntimeError(f"数据库连接失败，请检查MySQL配置: {e}")
+    
+    def _init_knowledge(self) -> None:
+        """初始化知识库组件"""
+        self._knowledge_learner: Any = None
+        
+        if not self._enable_knowledge_learning:
+            return
+        
+        try:
+            store = get_knowledge_store()
+            self._knowledge_learner = KnowledgeLearner(store)
+            self.logger.success("知识库组件初始化成功")
+        except Exception as e:
+            self.logger.warn(f"知识库初始化失败，知识学习功能将禁用: {e}")
+            self._enable_knowledge_learning = False
     
     def _generate_task_id(self) -> str:
         """生成任务ID"""
@@ -274,7 +308,55 @@ class AITestTool:
         if self.task_id:
             self._save_parsed_requests_to_db()
         
+        # 知识学习：从分析结果中学习知识
+        if self._enable_knowledge_learning:
+            self._learn_from_analysis()
+        
         return self.analysis_result
+    
+    def _learn_from_analysis(self) -> None:
+        """从分析结果中学习知识"""
+        if not self._knowledge_learner:
+            return
+        
+        try:
+            self.logger.info("正在从分析结果中学习知识...")
+            
+            # 构建学习内容
+            learning_content = {
+                "type": "log_analysis",
+                "task_id": self.task_id,
+                "statistics": self.analysis_result.get("statistics", {}),
+                "issues": self.analysis_result.get("issues", {}),
+                "sample_requests": [
+                    {
+                        "method": req.method,
+                        "url": req.url,
+                        "headers": req.headers,
+                        "http_status": req.http_status,
+                        "has_error": req.has_error,
+                        "error_message": req.error_message
+                    }
+                    for req in self.parsed_requests[:20]  # 取样本
+                ]
+            }
+            
+            import json
+            content_str = json.dumps(learning_content, ensure_ascii=False, indent=2)
+            
+            # 调用知识学习器
+            learned = self._knowledge_learner.learn_from_log_analysis(
+                content=content_str,
+                source_ref=self.task_id or "unknown"
+            )
+            
+            if learned:
+                self.logger.success(f"学习到 {len(learned)} 条新知识（待审核）")
+            else:
+                self.logger.debug("未发现需要学习的新知识")
+                
+        except Exception as e:
+            self.logger.warn(f"知识学习失败: {e}")
     
     def _save_parsed_requests_to_db(self) -> None:
         """保存解析的请求到数据库"""
@@ -593,7 +675,68 @@ class AITestTool:
             for i, rec in enumerate(self.validation_summary.recommendations, 1):
                 self.logger.info(f"   {i}. {rec}")
         
+        # 知识学习：从测试结果中学习知识
+        if self._enable_knowledge_learning:
+            self._learn_from_test_results()
+        
         return self.validation_summary
+    
+    def _learn_from_test_results(self) -> None:
+        """从测试结果中学习知识"""
+        if not self._knowledge_learner or not self.validation_summary:
+            return
+        
+        try:
+            # 只从失败的测试中学习
+            failed_results = [r for r in self.test_results if r.status.value in ("failed", "error")]
+            
+            if not failed_results:
+                self.logger.debug("无失败测试，跳过知识学习")
+                return
+            
+            self.logger.info("正在从测试结果中学习知识...")
+            
+            # 构建学习内容
+            import json
+            learning_content = {
+                "type": "test_results",
+                "execution_id": self.execution_id,
+                "summary": {
+                    "pass_rate": self.validation_summary.pass_rate,
+                    "total_cases": len(self.test_cases),
+                    "failed_count": len(failed_results),
+                    "issues": self.validation_summary.issues[:10],
+                    "recommendations": self.validation_summary.recommendations
+                },
+                "failed_cases": [
+                    {
+                        "case_name": r.test_case_name,
+                        "case_id": r.test_case_id,
+                        "status": r.status.value,
+                        "expected_status": 200,
+                        "actual_status": r.actual_status_code,
+                        "error_message": r.error_message,
+                        "response_body": (r.actual_response_body or "")[:500]
+                    }
+                    for r in failed_results[:10]
+                ]
+            }
+            
+            content_str = json.dumps(learning_content, ensure_ascii=False, indent=2)
+            
+            # 调用知识学习器
+            learned = self._knowledge_learner.learn_from_test_results(
+                content=content_str,
+                source_ref=self.execution_id or "unknown"
+            )
+            
+            if learned:
+                self.logger.success(f"从测试结果学习到 {len(learned)} 条新知识（待审核）")
+            else:
+                self.logger.debug("未发现需要学习的新知识")
+                
+        except Exception as e:
+            self.logger.warn(f"从测试结果学习知识失败: {e}")
     
     def export_all(self) -> dict[str, Any]:
         """
