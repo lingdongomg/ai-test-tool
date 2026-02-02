@@ -1,73 +1,118 @@
 """
 数据库模块
-提供 SQLite 数据库连接和数据持久化功能（开箱即用）
+该文件内容使用AI生成，注意识别准确性
 """
 
-from .connection import DatabaseManager, get_db_manager
+from .connection import (
+    DatabaseConfig,
+    DatabaseManager,
+    get_db_manager,
+    set_db_manager,
+)
+
 from .models import (
-    AnalysisTask,
+    # 基类
+    BaseModel,
+    # 枚举
     TaskStatus,
-    ParsedRequestRecord,
-    TestCaseRecord,
+    TaskType,
     TestCaseCategory,
     TestCasePriority,
-    TestResultRecord,
     TestResultStatus,
-    AnalysisReport,
     ReportType,
-    # 新增模型
+    TriggerType,
+    ExecutionStatus,
+    ExecutionType,
+    ResultType,
+    EndpointSourceType,
+    StepType,
+    ScenarioStatus,
+    ChangeType,
+    # 模型
+    AnalysisTask,
+    ParsedRequestRecord,
     ApiTag,
     ApiEndpoint,
-    EndpointSourceType,
+    TestCaseRecord,
+    TestCaseHistory,
+    TestExecution,
+    TestResultRecord,
+    AnalysisReport,
     TestScenario,
     ScenarioStep,
-    StepType,
     ScenarioExecution,
-    ScenarioStatus,
-    TriggerType,
     StepResult,
-    ScheduledTask
 )
+
 from .repository import (
+    # 基类
+    BaseRepository,
+    # 仓库
     TaskRepository,
     RequestRepository,
     TestCaseRepository,
+    TestCaseHistoryRepository,
     TestResultRepository,
-    ReportRepository
+    TestExecutionRepository,
+    ReportRepository,
+    ApiTagRepository,
+    ApiEndpointRepository,
+    TestScenarioRepository,
+    ScenarioStepRepository,
+    ScenarioExecutionRepository,
+    StepResultRepository,
 )
 
+
 __all__ = [
-    # 连接管理
-    "DatabaseManager",
-    "get_db_manager",
-    # 基础模型
-    "AnalysisTask",
-    "TaskStatus",
-    "ParsedRequestRecord",
-    "TestCaseRecord",
-    "TestCaseCategory",
-    "TestCasePriority",
-    "TestResultRecord",
-    "TestResultStatus",
-    "AnalysisReport",
-    "ReportType",
-    # 标签和端点模型
-    "ApiTag",
-    "ApiEndpoint",
-    "EndpointSourceType",
-    # 场景模型
-    "TestScenario",
-    "ScenarioStep",
-    "StepType",
-    "ScenarioExecution",
-    "ScenarioStatus",
-    "TriggerType",
-    "StepResult",
-    "ScheduledTask",
+    # 连接
+    'DatabaseConfig',
+    'DatabaseManager',
+    'get_db_manager',
+    'set_db_manager',
+    # 枚举
+    'TaskStatus',
+    'TaskType',
+    'TestCaseCategory',
+    'TestCasePriority',
+    'TestResultStatus',
+    'ReportType',
+    'TriggerType',
+    'ExecutionStatus',
+    'ExecutionType',
+    'ResultType',
+    'EndpointSourceType',
+    'StepType',
+    'ScenarioStatus',
+    'ChangeType',
+    # 模型
+    'BaseModel',
+    'AnalysisTask',
+    'ParsedRequestRecord',
+    'ApiTag',
+    'ApiEndpoint',
+    'TestCaseRecord',
+    'TestCaseHistory',
+    'TestExecution',
+    'TestResultRecord',
+    'AnalysisReport',
+    'TestScenario',
+    'ScenarioStep',
+    'ScenarioExecution',
+    'StepResult',
     # 仓库
-    "TaskRepository",
-    "RequestRepository",
-    "TestCaseRepository",
-    "TestResultRepository",
-    "ReportRepository"
+    'BaseRepository',
+    'TaskRepository',
+    'RequestRepository',
+    'TestCaseRepository',
+    'TestCaseHistoryRepository',
+    'TestResultRepository',
+    'TestExecutionRepository',
+    'ReportRepository',
+    'ApiTagRepository',
+    'ApiEndpointRepository',
+    'TestScenarioRepository',
+    'ScenarioStepRepository',
+    'ScenarioExecutionRepository',
+    'StepResultRepository',
 ]

@@ -33,3 +33,12 @@ tqdm>=4.67.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
 python-multipart>=0.0.9
+
+# Knowledge Base (Vector Search)
+chromadb>=0.4.0
+# Optional: Local embedding models
+# sentence-transformers>=2.2.0
+
+# Machine Learning Utils
+numpy>=1.26.0
+scikit-learn>=1.4.0

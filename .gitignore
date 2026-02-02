@@ -13,3 +13,9 @@ data/
 # 前端依赖和构建目录
 web/node_modules/
 web/dist/
+
+.codebuddy/
+.claude/
+openspec/
+AGENTS.md 
+CODEBUDDY.md
