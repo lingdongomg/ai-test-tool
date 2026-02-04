@@ -1,13 +1,26 @@
 """
 配置管理模块
 支持多种配置方式：环境变量、配置文件、代码配置
-Python 3.13+ 兼容
+使用 python-dotenv 自动加载 .env 文件
 """
 
 import os
+from pathlib import Path
 from typing import Literal, Self
+
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 自动加载 .env 文件
+from dotenv import load_dotenv
+
+# 查找项目根目录的 .env 文件
+_project_root = Path(__file__).parent.parent.parent
+_env_file = _project_root / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    # 尝试当前工作目录
+    load_dotenv()
 
 
 class LLMConfig(BaseModel):
@@ -35,8 +48,12 @@ class LLMConfig(BaseModel):
         description="生成温度"
     )
     max_tokens: int = Field(
-        default=4096,
-        description="最大生成token数"
+        default=8192,
+        description="最大生成token数（建议8192以上，避免输出截断）"
+    )
+    debug: bool = Field(
+        default=False,
+        description="是否开启LangChain调试模式"
     )
     
     @classmethod
@@ -48,7 +65,8 @@ class LLMConfig(BaseModel):
             api_key=os.getenv("LLM_API_KEY"),
             api_base=os.getenv("LLM_API_BASE"),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096"))
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "8192")),
+            debug=os.getenv("LLM_DEBUG", "false").lower() in ("true", "1", "yes")
         )
 
 
@@ -128,12 +146,8 @@ class AppConfig(BaseModel):
         return cls(
             llm=LLMConfig.from_env(),
             parser=LogParserConfig(),
-            test=TestConfig(
-                base_url=os.getenv("TEST_BASE_URL", "http://localhost:8080")
-            ),
-            output=OutputConfig(
-                output_dir=os.getenv("OUTPUT_DIR", "./output")
-            )
+            test=TestConfig(),
+            output=OutputConfig()
         )
 
 

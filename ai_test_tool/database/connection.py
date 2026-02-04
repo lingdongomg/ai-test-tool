@@ -1,86 +1,79 @@
 """
 数据库连接管理
-Python 3.13+ 兼容
+该文件内容使用AI生成，注意识别准确性
+使用 SQLite 作为默认数据库，开箱即用
 """
 
 import os
+import sqlite3
+import threading
+from pathlib import Path
 from typing import Any
 from contextlib import contextmanager
 from collections.abc import Generator
 
-import pymysql
-from pymysql.cursors import DictCursor
-from dotenv import load_dotenv
-
-load_dotenv()
-
 
 class DatabaseConfig:
     """数据库配置"""
-    
+
     def __init__(
         self,
-        host: str | None = None,
-        port: int | None = None,
-        user: str | None = None,
-        password: str | None = None,
-        database: str | None = None,
-        charset: str = "utf8mb4"
+        db_path: str | None = None,
+        timeout: float = 30.0,
+        check_same_thread: bool = False,
     ) -> None:
-        self.host = host or os.getenv("MYSQL_HOST", "localhost")
-        self.port = port or int(os.getenv("MYSQL_PORT", "3306"))
-        self.user = user or os.getenv("MYSQL_USER", "root")
-        self.password = password or os.getenv("MYSQL_PASSWORD", "")
-        self.database = database or os.getenv("MYSQL_DATABASE", "ai_test_tool")
-        self.charset = charset
-    
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "host": self.host,
-            "port": self.port,
-            "user": self.user,
-            "password": self.password,
-            "database": self.database,
-            "charset": self.charset
-        }
+        if db_path is None:
+            db_path = os.getenv("SQLITE_DB_PATH", "")
+            if not db_path:
+                project_root = Path(__file__).parent.parent.parent
+                data_dir = project_root / "data"
+                data_dir.mkdir(exist_ok=True)
+                db_path = str(data_dir / "ai_test_tool.db")
+        
+        self.db_path = db_path
+        self.timeout = timeout
+        self.check_same_thread = check_same_thread
 
 
 class DatabaseManager:
     """
-    数据库管理器
+    数据库管理器（SQLite）
     
-    负责数据库连接、初始化和基本操作
+    特点：
+    1. 开箱即用，无需配置外部数据库
+    2. 线程安全，使用线程本地连接
+    3. 自动创建数据库文件和表结构
     """
-    
+
     def __init__(self, config: DatabaseConfig | None = None) -> None:
         self.config = config or DatabaseConfig()
-        self._connection: pymysql.Connection | None = None
-    
-    def connect(self) -> pymysql.Connection:
-        """建立数据库连接"""
-        if self._connection is None or not self._connection.open:
-            self._connection = pymysql.connect(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-                database=self.config.database,
-                charset=self.config.charset,
-                cursorclass=DictCursor,
-                autocommit=False
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        self._initialized = False
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """获取线程本地的数据库连接"""
+        if not hasattr(self._local, 'connection') or self._local.connection is None:
+            conn = sqlite3.connect(
+                self.config.db_path,
+                timeout=self.config.timeout,
+                check_same_thread=self.config.check_same_thread,
             )
-        return self._connection
-    
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.row_factory = sqlite3.Row
+            self._local.connection = conn
+        return self._local.connection
+
     def close(self) -> None:
-        """关闭数据库连接"""
-        if self._connection and self._connection.open:
-            self._connection.close()
-            self._connection = None
-    
+        """关闭当前线程的连接"""
+        if hasattr(self._local, 'connection') and self._local.connection is not None:
+            self._local.connection.close()
+            self._local.connection = None
+
     @contextmanager
-    def get_cursor(self) -> Generator[DictCursor, None, None]:
+    def get_cursor(self) -> Generator[sqlite3.Cursor, None, None]:
         """获取数据库游标（上下文管理器）"""
-        conn = self.connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             yield cursor
@@ -90,235 +83,375 @@ class DatabaseManager:
             raise e
         finally:
             cursor.close()
-    
+
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> int:
         """执行SQL语句"""
+        sql = sql.replace('%s', '?')
         with self.get_cursor() as cursor:
-            cursor.execute(sql, params)
+            cursor.execute(sql, params or ())
             return cursor.rowcount
-    
+
     def execute_many(self, sql: str, params_list: list[tuple[Any, ...]]) -> int:
         """批量执行SQL语句"""
+        sql = sql.replace('%s', '?')
         with self.get_cursor() as cursor:
             cursor.executemany(sql, params_list)
             return cursor.rowcount
-    
-    def fetch_one(self, sql: str, params: tuple[Any, ...] | None = None) -> dict[str, Any] | None:
+
+    def fetch_one(
+        self, sql: str, params: tuple[Any, ...] | None = None
+    ) -> dict[str, Any] | None:
         """查询单条记录"""
+        sql = sql.replace('%s', '?')
         with self.get_cursor() as cursor:
-            cursor.execute(sql, params)
-            return cursor.fetchone()
-    
-    def fetch_all(self, sql: str, params: tuple[Any, ...] | None = None) -> list[dict[str, Any]]:
+            cursor.execute(sql, params or ())
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def fetch_all(
+        self, sql: str, params: tuple[Any, ...] | None = None
+    ) -> list[dict[str, Any]]:
         """查询多条记录"""
+        sql = sql.replace('%s', '?')
         with self.get_cursor() as cursor:
-            cursor.execute(sql, params)
-            return cursor.fetchall()
-    
+            cursor.execute(sql, params or ())
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows] if rows else []
+
     def init_database(self) -> None:
-        """初始化数据库（创建数据库和表）"""
-        # 先连接不指定数据库
-        temp_conn = pymysql.connect(
-            host=self.config.host,
-            port=self.config.port,
-            user=self.config.user,
-            password=self.config.password,
-            charset=self.config.charset
-        )
-        
-        try:
-            with temp_conn.cursor() as cursor:
-                # 创建数据库
-                cursor.execute(
-                    f"CREATE DATABASE IF NOT EXISTS `{self.config.database}` "
-                    f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-                )
-            temp_conn.commit()
-        finally:
-            temp_conn.close()
-        
-        # 连接到数据库并创建表
-        self.connect()
-        self._create_tables()
-    
+        """初始化数据库（创建表）"""
+        with self._lock:
+            if self._initialized:
+                return
+            self._create_tables()
+            self._initialized = True
+
     def _create_tables(self) -> None:
-        """创建数据表"""
-        tables_sql = get_create_tables_sql()
+        """从 schema.sql 文件创建数据表"""
+        schema_path = Path(__file__).parent / "schema.sql"
+        if schema_path.exists():
+            schema_sql = schema_path.read_text(encoding='utf-8')
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.executescript(schema_sql)
+                conn.commit()
+            finally:
+                cursor.close()
+        else:
+            # 回退到内置 SQL
+            self._create_tables_inline()
+
+    def _create_tables_inline(self) -> None:
+        """内置建表 SQL（作为回退方案）"""
+        tables_sql = [
+            # 分析任务表
+            """
+            CREATE TABLE IF NOT EXISTS analysis_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                task_type TEXT DEFAULT 'log_analysis',
+                log_file_path TEXT,
+                log_file_size INTEGER,
+                status TEXT DEFAULT 'pending',
+                total_lines INTEGER DEFAULT 0,
+                processed_lines INTEGER DEFAULT 0,
+                total_requests INTEGER DEFAULT 0,
+                total_test_cases INTEGER DEFAULT 0,
+                error_message TEXT,
+                metadata TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 解析请求表
+            """
+            CREATE TABLE IF NOT EXISTS parsed_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                category TEXT,
+                headers TEXT,
+                body TEXT,
+                query_params TEXT,
+                http_status INTEGER,
+                response_time_ms REAL,
+                response_body TEXT,
+                has_error INTEGER DEFAULT 0,
+                error_message TEXT,
+                has_warning INTEGER DEFAULT 0,
+                warning_message TEXT,
+                curl_command TEXT,
+                timestamp TEXT,
+                raw_logs TEXT,
+                metadata TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 接口标签表
+            """
+            CREATE TABLE IF NOT EXISTS api_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT DEFAULT '',
+                color TEXT DEFAULT '#1890ff',
+                parent_id INTEGER DEFAULT NULL,
+                sort_order INTEGER DEFAULT 0,
+                is_system INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 接口端点表
+            """
+            CREATE TABLE IF NOT EXISTS api_endpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                endpoint_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                summary TEXT,
+                parameters TEXT,
+                request_body TEXT,
+                responses TEXT,
+                security TEXT,
+                source_type TEXT DEFAULT 'manual',
+                source_file TEXT,
+                is_deprecated INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 接口-标签关联表
+            """
+            CREATE TABLE IF NOT EXISTS api_endpoint_tags (
+                endpoint_id TEXT NOT NULL,
+                tag_id INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (endpoint_id, tag_id)
+            )
+            """,
+            # 测试用例表
+            """
+            CREATE TABLE IF NOT EXISTS test_cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL UNIQUE,
+                endpoint_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                category TEXT DEFAULT 'normal',
+                priority TEXT DEFAULT 'medium',
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                headers TEXT,
+                body TEXT,
+                query_params TEXT,
+                expected_status_code INTEGER DEFAULT 200,
+                expected_response TEXT,
+                assertions TEXT,
+                max_response_time_ms INTEGER DEFAULT 3000,
+                tags TEXT,
+                is_enabled INTEGER DEFAULT 1,
+                is_ai_generated INTEGER DEFAULT 0,
+                source_task_id TEXT,
+                version INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 测试用例历史表
+            """
+            CREATE TABLE IF NOT EXISTS test_case_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                change_type TEXT NOT NULL,
+                change_summary TEXT,
+                snapshot TEXT NOT NULL,
+                changed_fields TEXT,
+                changed_by TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 测试执行批次表
+            """
+            CREATE TABLE IF NOT EXISTS test_executions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                execution_id TEXT NOT NULL UNIQUE,
+                name TEXT,
+                description TEXT,
+                execution_type TEXT DEFAULT 'test',
+                trigger_type TEXT DEFAULT 'manual',
+                status TEXT DEFAULT 'pending',
+                base_url TEXT,
+                environment TEXT,
+                variables TEXT,
+                headers TEXT,
+                total_cases INTEGER DEFAULT 0,
+                passed_cases INTEGER DEFAULT 0,
+                failed_cases INTEGER DEFAULT 0,
+                error_cases INTEGER DEFAULT 0,
+                skipped_cases INTEGER DEFAULT 0,
+                duration_ms INTEGER DEFAULT 0,
+                error_message TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 执行-用例关联表
+            """
+            CREATE TABLE IF NOT EXISTS execution_cases (
+                execution_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                order_index INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (execution_id, case_id)
+            )
+            """,
+            # 测试结果表
+            """
+            CREATE TABLE IF NOT EXISTS test_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL,
+                result_type TEXT DEFAULT 'test',
+                status TEXT NOT NULL,
+                actual_status_code INTEGER,
+                actual_response_time_ms REAL,
+                actual_response_body TEXT,
+                actual_headers TEXT,
+                error_message TEXT,
+                assertion_results TEXT,
+                ai_analysis TEXT,
+                executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 分析报告表
+            """
+            CREATE TABLE IF NOT EXISTS analysis_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                report_type TEXT DEFAULT 'analysis',
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                format TEXT DEFAULT 'markdown',
+                statistics TEXT,
+                issues TEXT,
+                recommendations TEXT,
+                severity TEXT DEFAULT 'medium',
+                metadata TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 测试场景表
+            """
+            CREATE TABLE IF NOT EXISTS test_scenarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scenario_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                tags TEXT,
+                variables TEXT,
+                setup_hooks TEXT,
+                teardown_hooks TEXT,
+                retry_on_failure INTEGER DEFAULT 0,
+                max_retries INTEGER DEFAULT 3,
+                is_enabled INTEGER DEFAULT 1,
+                created_by TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 场景步骤表
+            """
+            CREATE TABLE IF NOT EXISTS scenario_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scenario_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                step_type TEXT DEFAULT 'request',
+                method TEXT,
+                url TEXT,
+                headers TEXT,
+                body TEXT,
+                query_params TEXT,
+                extractions TEXT,
+                assertions TEXT,
+                wait_time_ms INTEGER DEFAULT 0,
+                condition TEXT,
+                loop_config TEXT,
+                timeout_ms INTEGER DEFAULT 30000,
+                continue_on_failure INTEGER DEFAULT 0,
+                is_enabled INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (scenario_id, step_id)
+            )
+            """,
+            # 场景执行记录表
+            """
+            CREATE TABLE IF NOT EXISTS scenario_executions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                execution_id TEXT NOT NULL UNIQUE,
+                scenario_id TEXT NOT NULL,
+                trigger_type TEXT DEFAULT 'manual',
+                status TEXT DEFAULT 'pending',
+                base_url TEXT,
+                environment TEXT,
+                variables TEXT,
+                total_steps INTEGER DEFAULT 0,
+                passed_steps INTEGER DEFAULT 0,
+                failed_steps INTEGER DEFAULT 0,
+                skipped_steps INTEGER DEFAULT 0,
+                duration_ms INTEGER DEFAULT 0,
+                error_message TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            # 步骤执行结果表
+            """
+            CREATE TABLE IF NOT EXISTS step_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                execution_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_order INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                request_url TEXT,
+                request_headers TEXT,
+                request_body TEXT,
+                response_status_code INTEGER,
+                response_headers TEXT,
+                response_body TEXT,
+                response_time_ms REAL,
+                extracted_variables TEXT,
+                assertion_results TEXT,
+                error_message TEXT,
+                executed_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        ]
         
-        with self.get_cursor() as cursor:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
             for sql in tables_sql:
                 cursor.execute(sql)
-
-
-def get_create_tables_sql() -> list[str]:
-    """获取建表SQL语句列表"""
-    return [
-        # 分析任务表
-        """
-        CREATE TABLE IF NOT EXISTS `analysis_tasks` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL UNIQUE COMMENT '任务唯一ID',
-            `name` VARCHAR(255) NOT NULL COMMENT '任务名称',
-            `description` TEXT COMMENT '任务描述',
-            `log_file_path` VARCHAR(512) NOT NULL COMMENT '日志文件路径',
-            `log_file_size` BIGINT UNSIGNED COMMENT '日志文件大小(字节)',
-            `status` ENUM('pending', 'running', 'completed', 'failed') DEFAULT 'pending' COMMENT '任务状态',
-            `total_lines` INT UNSIGNED DEFAULT 0 COMMENT '日志总行数',
-            `processed_lines` INT UNSIGNED DEFAULT 0 COMMENT '已处理行数',
-            `total_requests` INT UNSIGNED DEFAULT 0 COMMENT '解析出的请求总数',
-            `total_test_cases` INT UNSIGNED DEFAULT 0 COMMENT '生成的测试用例数',
-            `error_message` TEXT COMMENT '错误信息',
-            `started_at` DATETIME COMMENT '开始时间',
-            `completed_at` DATETIME COMMENT '完成时间',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX `idx_status` (`status`),
-            INDEX `idx_created_at` (`created_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分析任务表'
-        """,
-        
-        # 解析请求表
-        """
-        CREATE TABLE IF NOT EXISTS `parsed_requests` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-            `request_id` VARCHAR(64) NOT NULL COMMENT '请求唯一ID',
-            `method` VARCHAR(10) NOT NULL COMMENT 'HTTP方法',
-            `url` VARCHAR(2048) NOT NULL COMMENT '请求URL',
-            `category` VARCHAR(100) COMMENT '接口分类',
-            `headers` JSON COMMENT '请求头',
-            `body` TEXT COMMENT '请求体',
-            `query_params` JSON COMMENT '查询参数',
-            `http_status` INT COMMENT 'HTTP状态码',
-            `response_time_ms` DECIMAL(10,2) COMMENT '响应时间(ms)',
-            `response_body` TEXT COMMENT '响应体',
-            `has_error` TINYINT(1) DEFAULT 0 COMMENT '是否有错误',
-            `error_message` TEXT COMMENT '错误信息',
-            `has_warning` TINYINT(1) DEFAULT 0 COMMENT '是否有警告',
-            `warning_message` TEXT COMMENT '警告信息',
-            `curl_command` TEXT COMMENT 'curl命令',
-            `timestamp` VARCHAR(64) COMMENT '请求时间戳',
-            `raw_logs` TEXT COMMENT '原始日志',
-            `metadata` JSON COMMENT '元数据',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX `idx_task_id` (`task_id`),
-            INDEX `idx_method` (`method`),
-            INDEX `idx_category` (`category`),
-            INDEX `idx_http_status` (`http_status`),
-            INDEX `idx_has_error` (`has_error`),
-            FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='解析请求表'
-        """,
-        
-        # 测试用例表
-        """
-        CREATE TABLE IF NOT EXISTS `test_cases` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-            `case_id` VARCHAR(64) NOT NULL COMMENT '用例唯一ID',
-            `name` VARCHAR(255) NOT NULL COMMENT '用例名称',
-            `description` TEXT COMMENT '用例描述',
-            `category` ENUM('normal', 'boundary', 'exception', 'performance', 'security') DEFAULT 'normal' COMMENT '用例类别',
-            `priority` ENUM('high', 'medium', 'low') DEFAULT 'medium' COMMENT '优先级',
-            `method` VARCHAR(10) NOT NULL COMMENT 'HTTP方法',
-            `url` VARCHAR(2048) NOT NULL COMMENT '请求URL',
-            `headers` JSON COMMENT '请求头',
-            `body` JSON COMMENT '请求体',
-            `query_params` JSON COMMENT '查询参数',
-            `expected_status_code` INT DEFAULT 200 COMMENT '期望状态码',
-            `expected_response` JSON COMMENT '期望响应',
-            `max_response_time_ms` INT DEFAULT 3000 COMMENT '最大响应时间',
-            `tags` JSON COMMENT '标签',
-            `group_name` VARCHAR(100) COMMENT '分组名称',
-            `dependencies` JSON COMMENT '依赖用例ID',
-            `is_enabled` TINYINT(1) DEFAULT 1 COMMENT '是否启用',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY `uk_task_case` (`task_id`, `case_id`),
-            INDEX `idx_task_id` (`task_id`),
-            INDEX `idx_category` (`category`),
-            INDEX `idx_priority` (`priority`),
-            INDEX `idx_group_name` (`group_name`),
-            INDEX `idx_is_enabled` (`is_enabled`),
-            FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试用例表'
-        """,
-        
-        # 测试结果表
-        """
-        CREATE TABLE IF NOT EXISTS `test_results` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-            `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
-            `execution_id` VARCHAR(64) NOT NULL COMMENT '执行批次ID',
-            `status` ENUM('passed', 'failed', 'error', 'skipped') NOT NULL COMMENT '执行状态',
-            `actual_status_code` INT COMMENT '实际状态码',
-            `actual_response_time_ms` DECIMAL(10,2) COMMENT '实际响应时间',
-            `actual_response_body` TEXT COMMENT '实际响应体',
-            `actual_headers` JSON COMMENT '实际响应头',
-            `error_message` TEXT COMMENT '错误信息',
-            `validation_results` JSON COMMENT '验证结果',
-            `executed_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '执行时间',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX `idx_task_id` (`task_id`),
-            INDEX `idx_case_id` (`case_id`),
-            INDEX `idx_execution_id` (`execution_id`),
-            INDEX `idx_status` (`status`),
-            INDEX `idx_executed_at` (`executed_at`),
-            FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试结果表'
-        """,
-        
-        # 分析报告表
-        """
-        CREATE TABLE IF NOT EXISTS `analysis_reports` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-            `report_type` ENUM('analysis', 'test', 'summary') DEFAULT 'analysis' COMMENT '报告类型',
-            `title` VARCHAR(255) NOT NULL COMMENT '报告标题',
-            `content` LONGTEXT NOT NULL COMMENT '报告内容(Markdown)',
-            `format` ENUM('markdown', 'html', 'json') DEFAULT 'markdown' COMMENT '报告格式',
-            `statistics` JSON COMMENT '统计数据',
-            `issues` JSON COMMENT '问题列表',
-            `recommendations` JSON COMMENT '改进建议',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX `idx_task_id` (`task_id`),
-            INDEX `idx_report_type` (`report_type`),
-            FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分析报告表'
-        """,
-        
-        # 用例标签表
-        """
-        CREATE TABLE IF NOT EXISTS `test_case_tags` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-            `case_id` VARCHAR(64) NOT NULL COMMENT '关联用例ID',
-            `tag_name` VARCHAR(100) NOT NULL COMMENT '标签名称',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY `uk_case_tag` (`task_id`, `case_id`, `tag_name`),
-            INDEX `idx_tag_name` (`tag_name`),
-            FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例标签表'
-        """,
-        
-        # 用例分组表
-        """
-        CREATE TABLE IF NOT EXISTS `test_case_groups` (
-            `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `task_id` VARCHAR(64) NOT NULL COMMENT '关联任务ID',
-            `group_name` VARCHAR(100) NOT NULL COMMENT '分组名称',
-            `description` TEXT COMMENT '分组描述',
-            `parent_group` VARCHAR(100) COMMENT '父分组',
-            `sort_order` INT DEFAULT 0 COMMENT '排序',
-            `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY `uk_task_group` (`task_id`, `group_name`),
-            INDEX `idx_parent_group` (`parent_group`),
-            FOREIGN KEY (`task_id`) REFERENCES `analysis_tasks`(`task_id`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用例分组表'
-        """
-    ]
+            conn.commit()
+        finally:
+            cursor.close()
 
 
 # 全局数据库管理器实例
@@ -330,6 +463,7 @@ def get_db_manager(config: DatabaseConfig | None = None) -> DatabaseManager:
     global _db_manager
     if _db_manager is None:
         _db_manager = DatabaseManager(config)
+        _db_manager.init_database()
     return _db_manager
 
 
