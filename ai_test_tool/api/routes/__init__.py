@@ -11,6 +11,15 @@ from functools import wraps
 
 from ...database import get_db_manager
 from ...utils.logger import get_logger
+from ...utils.sql_security import (
+    validate_table_name,
+    validate_field_name,
+    validate_order_by_multi,
+    validate_fields_for_update,
+    escape_like_pattern,
+    build_safe_like,
+    get_allowed_sort_fields,
+)
 
 logger = get_logger()
 T = TypeVar('T')
@@ -28,7 +37,7 @@ def paginate(
 ) -> dict[str, Any]:
     """
     通用分页查询
-    
+
     Args:
         table: 表名
         conditions: WHERE条件列表（不含WHERE关键字）
@@ -38,21 +47,26 @@ def paginate(
         order_by: 排序字段
         select_fields: 查询字段
         joins: JOIN子句
-    
+
     Returns:
         包含 total, page, page_size, items 的字典
     """
     db = get_db_manager()
     conditions = conditions or []
     params = params or []
-    
+
+    # SQL 安全验证
+    validate_table_name(table)
+    allowed_sort = get_allowed_sort_fields(table)
+    order_by = validate_order_by_multi(order_by, allowed_sort)
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    
+
     # 获取总数
     count_sql = f"SELECT COUNT(*) as count FROM {table} {joins} {where_clause}"
     count_result = db.fetch_one(count_sql, tuple(params) if params else None)
     total = count_result['count'] if count_result else 0
-    
+
     # 获取分页数据
     offset = (page - 1) * page_size
     sql = f"""
@@ -63,7 +77,7 @@ def paginate(
     """
     params.extend([page_size, offset])
     rows = db.fetch_all(sql, tuple(params))
-    
+
     return {
         "total": total,
         "page": page,
@@ -93,20 +107,26 @@ def update_task_status(
 ) -> None:
     """更新任务状态"""
     db = get_db_manager()
-    
+
+    # SQL 安全验证
+    validate_table_name(table)
+    validate_field_name(id_field, table, allow_qualified=False)
+
     fields = ["status = %s"]
     params: list[Any] = [status]
-    
+
     if status == "running":
         fields.append("started_at = datetime('now')")
     elif status in ("completed", "failed"):
         fields.append("completed_at = datetime('now')")
-    
+
     if extra_fields:
-        for key, value in extra_fields.items():
+        # 验证额外字段
+        validated_fields = validate_fields_for_update(extra_fields.keys(), table)
+        for key in validated_fields:
             fields.append(f"{key} = %s")
-            params.append(value)
-    
+            params.append(extra_fields[key])
+
     params.append(task_id)
     sql = f"UPDATE {table} SET {', '.join(fields)} WHERE {id_field} = %s"
     db.execute(sql, tuple(params))
@@ -118,36 +138,36 @@ def build_conditions(
 ) -> tuple[list[str], list[Any]]:
     """
     根据过滤条件构建WHERE子句
-    
+
     Args:
         filters: 过滤条件字典 {field: value}
         field_mapping: 字段映射 {param_name: sql_field}
-    
+
     Returns:
         (conditions, params) 元组
     """
     conditions: list[str] = []
     params: list[Any] = []
     field_mapping = field_mapping or {}
-    
+
     for key, value in filters.items():
         if value is None:
             continue
-        
+
         field = field_mapping.get(key, key)
-        
+
         if key.endswith("_search"):
-            # 模糊搜索
+            # 模糊搜索 - 使用安全的 LIKE 参数构建
             base_field = field_mapping.get(key, key.replace("_search", ""))
-            conditions.append(f"({base_field} LIKE %s)")
-            params.append(f"%{value}%")
+            conditions.append(f"({base_field} LIKE %s ESCAPE '\\\\')")
+            params.append(build_safe_like(str(value)))
         elif isinstance(value, bool):
             conditions.append(f"{field} = %s")
             params.append(1 if value else 0)
         else:
             conditions.append(f"{field} = %s")
             params.append(value)
-    
+
     return conditions, params
 
 

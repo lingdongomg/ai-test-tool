@@ -242,3 +242,162 @@ export function formatNumber(value: number | undefined | null): string {
   if (value == null) return '0'
   return value.toLocaleString('zh-CN')
 }
+
+// =====================================================
+// API 请求工具
+// =====================================================
+
+/** API 错误类型 */
+export type ApiErrorType = 'network' | 'timeout' | 'server' | 'client' | 'unknown'
+
+/** API 错误接口 */
+export interface ApiError {
+  type: ApiErrorType
+  message: string
+  status?: number
+  details?: string
+}
+
+/**
+ * 判断错误类型
+ */
+export function getApiErrorType(error: unknown): ApiErrorType {
+  if (error instanceof TypeError && error.message.includes('fetch')) {
+    return 'network'
+  }
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return 'timeout'
+  }
+  if (error instanceof Error) {
+    if (error.message.includes('timeout') || error.message.includes('Timeout')) {
+      return 'timeout'
+    }
+    if (error.message.includes('network') || error.message.includes('Network')) {
+      return 'network'
+    }
+  }
+  return 'unknown'
+}
+
+/**
+ * 解析 API 错误
+ */
+export function parseApiError(error: unknown, response?: Response): ApiError {
+  const type = getApiErrorType(error)
+
+  if (type === 'network') {
+    return {
+      type: 'network',
+      message: '网络连接失败，请检查网络后重试'
+    }
+  }
+
+  if (type === 'timeout') {
+    return {
+      type: 'timeout',
+      message: '请求超时，服务器响应时间过长'
+    }
+  }
+
+  if (response) {
+    const status = response.status
+    if (status >= 500) {
+      return {
+        type: 'server',
+        status,
+        message: '服务器错误，请稍后重试'
+      }
+    }
+    if (status >= 400) {
+      return {
+        type: 'client',
+        status,
+        message: getHttpErrorMessage(status)
+      }
+    }
+  }
+
+  return {
+    type: 'unknown',
+    message: error instanceof Error ? error.message : '未知错误',
+    details: error instanceof Error ? error.stack : undefined
+  }
+}
+
+/**
+ * 获取 HTTP 错误信息
+ */
+export function getHttpErrorMessage(status: number): string {
+  const messages: Record<number, string> = {
+    400: '请求参数错误',
+    401: '未授权，请重新登录',
+    403: '没有访问权限',
+    404: '请求的资源不存在',
+    405: '不支持的请求方法',
+    408: '请求超时',
+    409: '资源冲突',
+    413: '请求体过大',
+    422: '请求数据验证失败',
+    429: '请求过于频繁，请稍后重试',
+    500: '服务器内部错误',
+    502: '网关错误',
+    503: '服务暂时不可用',
+    504: '网关超时'
+  }
+  return messages[status] || `HTTP 错误 ${status}`
+}
+
+/**
+ * 带超时的 fetch 请求
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<Response> {
+  const { timeout = 30000, ...fetchOptions } = options
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal
+    })
+    return response
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+/**
+ * API 请求封装
+ */
+export async function apiRequest<T = any>(
+  url: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<{ data: T | null; error: ApiError | null }> {
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+      },
+      ...options
+    })
+
+    if (!response.ok) {
+      return {
+        data: null,
+        error: parseApiError(new Error(`HTTP ${response.status}`), response)
+      }
+    }
+
+    const data = await response.json()
+    return { data, error: null }
+  } catch (error) {
+    return {
+      data: null,
+      error: parseApiError(error)
+    }
+  }
+}

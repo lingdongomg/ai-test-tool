@@ -10,8 +10,14 @@ from pydantic import BaseModel, Field
 
 from ...database import get_db_manager
 from ...importer import DocImporter, ImportResult, UpdateStrategy, EndpointDiff
+from ...exceptions import FileUploadError
+from ...utils.file_validator import validate_upload_file, validate_upload_file_content, sanitize_filename
 
 router = APIRouter()
+
+# JSON 文件专用验证参数
+JSON_ALLOWED_EXTENSIONS = {".json"}
+JSON_ALLOWED_MIMETYPES = {"application/json", "text/plain", "application/octet-stream"}
 
 
 class ImportRequest(BaseModel):
@@ -82,29 +88,37 @@ async def import_file(
 ):
     """
     上传并导入接口文档文件
-    
+
     支持 Swagger/OpenAPI 和 Postman Collection 格式
     支持增量更新：
     - merge: 合并更新（更新已有接口，新增缺失接口）
     - replace: 完全替换（删除旧数据，导入新数据）
     - skip: 跳过已有（仅新增缺失接口）
     """
-    # 检查文件类型
-    if not file.filename or not file.filename.endswith('.json'):
-        raise HTTPException(status_code=400, detail="只支持 JSON 文件")
-    
-    # 读取文件内容
+    # 验证文件（扩展名、MIME类型、大小）
+    validate_upload_file(
+        file,
+        allowed_extensions=JSON_ALLOWED_EXTENSIONS,
+        allowed_mimetypes=JSON_ALLOWED_MIMETYPES
+    )
+
+    # 读取并验证文件内容大小
     try:
-        content = await file.read()
+        content = await validate_upload_file_content(file)
         data = json.loads(content.decode('utf-8'))
+    except FileUploadError:
+        raise
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文件读取失败: {e}")
+        raise FileUploadError(f"JSON 解析失败: {e}", file.filename)
+    except UnicodeDecodeError as e:
+        raise FileUploadError(f"文件编码错误，请使用 UTF-8 编码: {e}", file.filename)
+
+    # 净化文件名
+    safe_filename = sanitize_filename(file.filename or "import.json")
     
     # 导入
     importer = DocImporter()
-    result = importer.import_json(data, doc_type, file.filename)
+    result = importer.import_json(data, doc_type, safe_filename)
     
     if not result.success:
         return ImportResponse(
@@ -123,7 +137,7 @@ async def import_file(
     
     if save_to_db:
         strategy = UpdateStrategy(update_strategy)
-        counts = _save_import_result_with_strategy(result, file.filename, strategy)
+        counts = _save_import_result_with_strategy(result, safe_filename, strategy)
         created_count, updated_count, skipped_count, deleted_count = counts
     
     return ImportResponse(
@@ -193,18 +207,23 @@ async def preview_import(
     """
     预览导入结果（不保存到数据库）
     """
-    # 检查文件类型
-    if not file.filename or not file.filename.endswith('.json'):
-        raise HTTPException(status_code=400, detail="只支持 JSON 文件")
-    
+    # 验证文件
+    validate_upload_file(
+        file,
+        allowed_extensions=JSON_ALLOWED_EXTENSIONS,
+        allowed_mimetypes=JSON_ALLOWED_MIMETYPES
+    )
+
     # 读取文件内容
     try:
-        content = await file.read()
+        content = await validate_upload_file_content(file)
         data = json.loads(content.decode('utf-8'))
+    except FileUploadError:
+        raise
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文件读取失败: {e}")
+        raise FileUploadError(f"JSON 解析失败: {e}", file.filename)
+    except UnicodeDecodeError as e:
+        raise FileUploadError(f"文件编码错误: {e}", file.filename)
     
     # 检测文档类型
     importer = DocImporter()
@@ -235,28 +254,36 @@ async def diff_import(
 ):
     """
     对比导入文件与现有数据的差异
-    
+
     返回新增、更新、未变更、已删除的接口列表
     """
-    # 检查文件类型
-    if not file.filename or not file.filename.endswith('.json'):
-        raise HTTPException(status_code=400, detail="只支持 JSON 文件")
-    
+    # 验证文件
+    validate_upload_file(
+        file,
+        allowed_extensions=JSON_ALLOWED_EXTENSIONS,
+        allowed_mimetypes=JSON_ALLOWED_MIMETYPES
+    )
+
     # 读取文件内容
     try:
-        content = await file.read()
+        content = await validate_upload_file_content(file)
         data = json.loads(content.decode('utf-8'))
+    except FileUploadError:
+        raise
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文件读取失败: {e}")
+        raise FileUploadError(f"JSON 解析失败: {e}", file.filename)
+    except UnicodeDecodeError as e:
+        raise FileUploadError(f"文件编码错误: {e}", file.filename)
+
+    # 净化文件名
+    safe_filename = sanitize_filename(file.filename or "diff.json")
     
     # 解析新文档
     importer = DocImporter()
-    result = importer.import_json(data, doc_type, file.filename or "diff.json")
-    
+    result = importer.import_json(data, doc_type, safe_filename)
+
     if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
+        raise FileUploadError(result.message, file.filename)
     
     # 获取现有接口
     existing_endpoints = _get_existing_endpoints()

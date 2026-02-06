@@ -11,6 +11,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from ..config.settings import get_config
+from ..exceptions import (
+    AITestToolError,
+    ValidationError,
+    NotFoundError,
+    FileUploadError,
+    DatabaseError,
+    LLMError,
+    ExternalServiceError,
+    get_http_status
+)
 from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge
 
 
@@ -19,15 +30,15 @@ def setup_logging() -> logging.Logger:
     # 创建日志目录
     log_dir = Path(__file__).parent.parent.parent / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # 日志文件名
     date_str = datetime.now().strftime("%Y%m%d")
     log_file = log_dir / f"api_{date_str}.log"
-    
+
     # 配置日志
     logger = logging.getLogger("ai_test_tool.api")
     logger.setLevel(logging.DEBUG)
-    
+
     # 文件处理器
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
@@ -36,7 +47,7 @@ def setup_logging() -> logging.Logger:
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(file_formatter)
-    
+
     # 控制台处理器
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
@@ -45,12 +56,12 @@ def setup_logging() -> logging.Logger:
         datefmt='%H:%M:%S'
     )
     console_handler.setFormatter(console_formatter)
-    
+
     # 添加处理器
     if not logger.handlers:
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
-    
+
     return logger
 
 
@@ -59,7 +70,11 @@ def create_app() -> FastAPI:
     # 设置日志
     logger = setup_logging()
     logger.info("正在创建 FastAPI 应用...")
-    
+
+    # 加载配置
+    config = get_config()
+    security_config = config.security
+
     app = FastAPI(
         title="AI Test Tool API",
         description="智能API测试工具后台服务",
@@ -67,27 +82,87 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc"
     )
-    
-    # CORS 配置
+
+    # CORS 配置 - 使用安全配置
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
+        allow_origins=security_config.cors_origins_list,
+        allow_credentials=security_config.cors_allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         allow_headers=["*"],
     )
-    
-    # 全局异常处理
+
+    # ==================== 异常处理器 ====================
+
+    @app.exception_handler(ValidationError)
+    async def validation_error_handler(request: Request, exc: ValidationError):
+        """处理验证错误 - 400"""
+        logger.warning(f"验证错误: {request.method} {request.url.path} - {exc.message}")
+        return JSONResponse(
+            status_code=400,
+            content=exc.to_dict(include_details=True)
+        )
+
+    @app.exception_handler(FileUploadError)
+    async def file_upload_error_handler(request: Request, exc: FileUploadError):
+        """处理文件上传错误 - 400"""
+        logger.warning(f"文件上传错误: {request.method} {request.url.path} - {exc.message}")
+        return JSONResponse(
+            status_code=400,
+            content=exc.to_dict(include_details=True)
+        )
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_error_handler(request: Request, exc: NotFoundError):
+        """处理资源不存在错误 - 404"""
+        logger.warning(f"资源不存在: {request.method} {request.url.path} - {exc.message}")
+        return JSONResponse(
+            status_code=404,
+            content=exc.to_dict(include_details=True)
+        )
+
+    @app.exception_handler(AITestToolError)
+    async def custom_error_handler(request: Request, exc: AITestToolError):
+        """处理自定义异常"""
+        status_code = get_http_status(exc)
+        logger.error(f"业务异常 [{exc.code}]: {request.method} {request.url.path} - {exc.message}")
+        # 生产环境不暴露详细信息
+        include_details = security_config.debug or not security_config.is_production
+        return JSONResponse(
+            status_code=status_code,
+            content=exc.to_dict(include_details=include_details)
+        )
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        logger.error(f"请求异常: {request.method} {request.url.path} - {type(exc).__name__}: {exc}")
+        """全局异常处理 - 处理未预期的异常"""
         import traceback
+        logger.error(f"未处理异常: {request.method} {request.url.path} - {type(exc).__name__}: {exc}")
         logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
+
+        # 生产环境不暴露详细错误信息
+        if security_config.is_production and not security_config.debug:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "code": "INTERNAL_ERROR",
+                    "message": "服务器内部错误，请稍后重试"
+                }
+            )
+
+        # 开发环境返回详细错误信息
         return JSONResponse(
             status_code=500,
-            content={"detail": f"Internal Server Error: {str(exc)}"}
+            content={
+                "code": "INTERNAL_ERROR",
+                "message": str(exc),
+                "details": {
+                    "type": type(exc).__name__,
+                    "traceback": traceback.format_exc() if security_config.debug else None
+                }
+            }
         )
-    
+
     # 请求日志中间件
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -95,7 +170,7 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         logger.debug(f"响应: {request.method} {request.url.path} - {response.status_code}")
         return response
-    
+
     # ==================== API 路由 ====================
     # 首页仪表盘
     app.include_router(dashboard.router, prefix="/api/v2/dashboard", tags=["仪表盘"])
@@ -113,14 +188,14 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router, prefix="/api/v2/tasks", tags=["分析任务"])
     # 知识库管理
     app.include_router(knowledge.router, prefix="/api/v2/knowledge", tags=["知识库"])
-    
+
     @app.get("/", tags=["健康检查"])
     async def root():
         return {"message": "AI Test Tool API", "version": "2.0.0"}
-    
+
     @app.get("/health", tags=["健康检查"])
     async def health():
         return {"status": "healthy"}
-    
-    logger.info("FastAPI 应用创建完成")
+
+    logger.info(f"FastAPI 应用创建完成 (环境: {security_config.environment})")
     return app

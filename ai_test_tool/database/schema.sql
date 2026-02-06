@@ -431,3 +431,49 @@ CREATE TABLE IF NOT EXISTS knowledge_usage (
 CREATE INDEX IF NOT EXISTS idx_knowledge_usage_knowledge_id ON knowledge_usage(knowledge_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_usage_used_in ON knowledge_usage(used_in);
 CREATE INDEX IF NOT EXISTS idx_knowledge_usage_used_at ON knowledge_usage(used_at);
+
+-- =====================================================
+-- 复合索引优化（高频查询场景）
+-- =====================================================
+
+-- 优化 endpoint 下启用用例查询
+CREATE INDEX IF NOT EXISTS idx_test_cases_endpoint_enabled ON test_cases(endpoint_id, is_enabled);
+
+-- 优化执行结果统计查询
+CREATE INDEX IF NOT EXISTS idx_test_results_exec_status ON test_results(execution_id, status);
+
+-- 优化请求状态码分析
+CREATE INDEX IF NOT EXISTS idx_parsed_requests_task_status ON parsed_requests(task_id, http_status);
+
+-- 优化知识库搜索
+CREATE INDEX IF NOT EXISTS idx_knowledge_type_status ON knowledge_entries(type, status);
+
+-- =====================================================
+-- AI 对话会话表
+-- =====================================================
+
+-- 对话会话表
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL UNIQUE,
+    title TEXT DEFAULT '',
+    context TEXT DEFAULT '{}',
+    message_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_created_at ON chat_sessions(created_at);
+
+-- 对话消息表
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL UNIQUE,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+    content TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);

@@ -4,7 +4,7 @@
 """
 
 from typing import Any, Literal
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -13,19 +13,29 @@ import os
 import uuid
 
 from ...services import LogAnomalyDetectorService, AIAssistantService
-from ...database import get_db_manager
+from ...database import get_db_manager, DatabaseManager
 from ...database.repository import RequestRepository
 from ...database.models import ParsedRequestRecord
 from ...parser.log_parser import LogParser
 from ...llm.chains import LogAnalysisChain
 from ...llm.provider import get_llm_provider
 from ...utils.logger import get_logger
+from ...config.settings import get_config
+from ..dependencies import (
+    get_database,
+    get_request_repository,
+    get_log_anomaly_detector_service
+)
 
 router = APIRouter()
 logger = get_logger()
 
-# 创建线程池用于执行阻塞操作，避免阻塞主事件循环
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="insights_worker")
+# 从配置获取线程池 worker 数
+_config = get_config()
+_executor = ThreadPoolExecutor(
+    max_workers=_config.task.max_workers,
+    thread_name_prefix="insights_worker"
+)
 
 
 # ==================== 请求/响应模型 ====================
@@ -68,11 +78,12 @@ async def upload_log_file(
     detect_types: str | None = Form(default=None),
     include_ai_analysis: bool = Form(default=True),
     max_lines: int | None = Form(default=None, description="最大处理行数"),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
+    db: DatabaseManager = Depends(get_database)
 ):
     """
     上传日志文件进行分析
-    
+
     支持格式：.log, .txt, .json
     分析类型：
     - anomaly: 异常检测（检测错误、警告等）
@@ -81,49 +92,48 @@ async def upload_log_file(
     # 验证文件类型
     allowed_extensions = {'.log', '.txt', '.json'}
     file_ext = os.path.splitext(file.filename)[1].lower()
-    
+
     if file_ext not in allowed_extensions:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"不支持的文件类型，支持: {', '.join(allowed_extensions)}"
         )
-    
+
     # 验证分析类型
     if analysis_type not in ('anomaly', 'request'):
         raise HTTPException(
             status_code=400,
             detail="分析类型必须是 anomaly 或 request"
         )
-    
+
     # 保存文件
     task_id = str(uuid.uuid4())[:8]
     upload_dir = os.path.join(os.getcwd(), 'uploads', 'logs')
     os.makedirs(upload_dir, exist_ok=True)
-    
+
     file_path = os.path.join(upload_dir, f"{task_id}_{file.filename}")
-    
+
     try:
         content = await file.read()
         with open(file_path, 'wb') as f:
             f.write(content)
-        
+
         # 创建分析任务
-        db = get_db_manager()
         task_name = f"日志分析-{file.filename}" if analysis_type == "anomaly" else f"请求提取-{file.filename}"
         db.execute("""
-            INSERT INTO analysis_tasks 
+            INSERT INTO analysis_tasks
             (task_id, name, log_file_path, log_file_size, status)
             VALUES (%s, %s, %s, %s, 'pending')
         """, (task_id, task_name, file_path, len(content)))
-        
+
         # 后台执行分析
         if background_tasks:
             if analysis_type == "anomaly":
                 types_list = detect_types.split(',') if detect_types else None
                 background_tasks.add_task(
-                    _analyze_log_task, 
-                    task_id, 
-                    file_path, 
+                    _analyze_log_task,
+                    task_id,
+                    file_path,
                     types_list,
                     include_ai_analysis
                 )
@@ -134,7 +144,7 @@ async def upload_log_file(
                     file_path,
                     max_lines
                 )
-        
+
         return {
             "success": True,
             "task_id": task_id,
@@ -143,19 +153,21 @@ async def upload_log_file(
             "analysis_type": analysis_type,
             "message": f"文件上传成功，正在后台{'解析请求' if analysis_type == 'request' else '检测异常'}"
         }
-    
+
     except Exception as e:
         logger.error(f"上传文件失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/analyze")
-async def analyze_log(request: AnalyzeLogRequest, background_tasks: BackgroundTasks):
+async def analyze_log(
+    request: AnalyzeLogRequest,
+    background_tasks: BackgroundTasks,
+    db: DatabaseManager = Depends(get_database)
+):
     """
     分析日志（支持已有任务或直接粘贴内容）
     """
-    db = get_db_manager()
-    
     if request.task_id:
         # 分析已有任务
         task = db.fetch_one(
@@ -164,31 +176,31 @@ async def analyze_log(request: AnalyzeLogRequest, background_tasks: BackgroundTa
         )
         if not task:
             raise HTTPException(status_code=404, detail="任务不存在")
-        
+
         file_path = task['log_file_path']
-    
+
     elif request.log_content:
         # 直接分析粘贴的内容
         task_id = str(uuid.uuid4())[:8]
         upload_dir = os.path.join(os.getcwd(), 'uploads', 'logs')
         os.makedirs(upload_dir, exist_ok=True)
-        
+
         file_path = os.path.join(upload_dir, f"{task_id}_pasted.log")
-        
+
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(request.log_content)
-        
+
         db.execute("""
-            INSERT INTO analysis_tasks 
+            INSERT INTO analysis_tasks
             (task_id, name, log_file_path, log_file_size, status)
             VALUES (%s, %s, %s, %s, 'pending')
         """, (task_id, "日志分析-粘贴内容", file_path, len(request.log_content)))
-        
+
         request.task_id = task_id
-    
+
     else:
         raise HTTPException(status_code=400, detail="请提供 task_id 或 log_content")
-    
+
     # 后台执行分析
     background_tasks.add_task(
         _analyze_log_task,
@@ -197,7 +209,7 @@ async def analyze_log(request: AnalyzeLogRequest, background_tasks: BackgroundTa
         request.detect_types,
         request.include_ai_analysis
     )
-    
+
     return {
         "success": True,
         "task_id": request.task_id,
@@ -389,24 +401,23 @@ async def _parse_requests_task(
 async def list_analysis_tasks(
     status: str | None = None,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100)
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: DatabaseManager = Depends(get_database)
 ):
     """获取分析任务列表"""
-    db = get_db_manager()
-    
     conditions = []
     params: list[Any] = []
-    
+
     if status:
         conditions.append("status = %s")
         params.append(status)
-    
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    
+
     count_sql = f"SELECT COUNT(*) as count FROM analysis_tasks {where_clause}"
     count_result = db.fetch_one(count_sql, tuple(params) if params else None)
     total = count_result['count'] if count_result else 0
-    
+
     offset = (page - 1) * page_size
     sql = f"""
         SELECT * FROM analysis_tasks
@@ -416,7 +427,7 @@ async def list_analysis_tasks(
     """
     params.extend([page_size, offset])
     rows = db.fetch_all(sql, tuple(params))
-    
+
     return {
         "total": total,
         "page": page,
@@ -426,24 +437,25 @@ async def list_analysis_tasks(
 
 
 @router.get("/tasks/{task_id}")
-async def get_analysis_task(task_id: str):
+async def get_analysis_task(
+    task_id: str,
+    db: DatabaseManager = Depends(get_database)
+):
     """获取分析任务详情"""
-    db = get_db_manager()
-    
     task = db.fetch_one(
         "SELECT * FROM analysis_tasks WHERE task_id = %s",
         (task_id,)
     )
-    
+
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     # 获取关联的报告
     reports = db.fetch_all(
         "SELECT * FROM analysis_reports WHERE task_id = %s ORDER BY created_at DESC",
         (task_id,)
     )
-    
+
     return {
         "task": dict(task),
         "reports": [dict(r) for r in reports]
@@ -451,28 +463,29 @@ async def get_analysis_task(task_id: str):
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_analysis_task(task_id: str):
+async def delete_analysis_task(
+    task_id: str,
+    db: DatabaseManager = Depends(get_database)
+):
     """删除分析任务"""
-    db = get_db_manager()
-    
     # 检查任务是否存在
     task = db.fetch_one(
         "SELECT * FROM analysis_tasks WHERE task_id = %s",
         (task_id,)
     )
-    
+
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     # 删除关联的报告
     db.execute("DELETE FROM analysis_reports WHERE task_id = %s", (task_id,))
-    
+
     # 删除关联的解析请求
     db.execute("DELETE FROM parsed_requests WHERE task_id = %s", (task_id,))
-    
+
     # 删除任务
     db.execute("DELETE FROM analysis_tasks WHERE task_id = %s", (task_id,))
-    
+
     # 删除上传的文件
     if task.get('log_file_path'):
         import os
@@ -481,6 +494,8 @@ async def delete_analysis_task(task_id: str):
                 os.remove(task['log_file_path'])
         except Exception as e:
             logger.warn(f"删除文件失败: {e}")
+
+    return {"success": True, "message": "删除成功"}
     
     return {"success": True, "message": "删除成功"}
 
@@ -492,24 +507,23 @@ async def list_anomaly_reports(
     task_id: str | None = None,
     severity: str | None = None,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100)
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: DatabaseManager = Depends(get_database)
 ):
     """获取异常报告列表"""
-    db = get_db_manager()
-    
     conditions = ["report_type = 'anomaly'"]
     params: list[Any] = []
-    
+
     if task_id:
         conditions.append("task_id = %s")
         params.append(task_id)
-    
+
     where_clause = f"WHERE {' AND '.join(conditions)}"
-    
+
     count_sql = f"SELECT COUNT(*) as count FROM analysis_reports {where_clause}"
     count_result = db.fetch_one(count_sql, tuple(params) if params else None)
     total = count_result['count'] if count_result else 0
-    
+
     offset = (page - 1) * page_size
     sql = f"""
         SELECT id, task_id, title, format, statistics, created_at
@@ -520,7 +534,7 @@ async def list_anomaly_reports(
     """
     params.extend([page_size, offset])
     rows = db.fetch_all(sql, tuple(params))
-    
+
     return {
         "total": total,
         "page": page,
@@ -530,35 +544,38 @@ async def list_anomaly_reports(
 
 
 @router.get("/reports/{report_id}")
-async def get_anomaly_report(report_id: int):
+async def get_anomaly_report(
+    report_id: int,
+    db: DatabaseManager = Depends(get_database)
+):
     """获取异常报告详情"""
-    db = get_db_manager()
-    
     sql = "SELECT * FROM analysis_reports WHERE id = %s"
     row = db.fetch_one(sql, (report_id,))
-    
+
     if not row:
         raise HTTPException(status_code=404, detail="报告不存在")
-    
+
     return dict(row)
 
 
 @router.get("/reports/{report_id}/download")
-async def download_report(report_id: int, format: str = Query(default="markdown")):
+async def download_report(
+    report_id: int,
+    format: str = Query(default="markdown"),
+    db: DatabaseManager = Depends(get_database)
+):
     """下载报告"""
     from fastapi.responses import PlainTextResponse
-    
-    db = get_db_manager()
-    
+
     sql = "SELECT * FROM analysis_reports WHERE id = %s"
     row = db.fetch_one(sql, (report_id,))
-    
+
     if not row:
         raise HTTPException(status_code=404, detail="报告不存在")
-    
+
     content = row['content']
     filename = f"anomaly_report_{report_id}.md"
-    
+
     return PlainTextResponse(
         content=content,
         media_type="text/markdown",
@@ -569,11 +586,12 @@ async def download_report(report_id: int, format: str = Query(default="markdown"
 # ==================== 异常检测 ====================
 
 @router.post("/detect")
-async def detect_anomalies(request: AnalyzeLogRequest):
+async def detect_anomalies(
+    request: AnalyzeLogRequest,
+    service: LogAnomalyDetectorService = Depends(get_log_anomaly_detector_service)
+):
     """直接检测异常（同步返回结果）"""
     try:
-        service = LogAnomalyDetectorService(verbose=True)
-        
         if request.task_id:
             report = service.detect_anomalies_from_task(
                 task_id=request.task_id,
@@ -588,7 +606,7 @@ async def detect_anomalies(request: AnalyzeLogRequest):
             )
         else:
             raise HTTPException(status_code=400, detail="请提供 task_id 或 log_content")
-        
+
         return {
             "success": True,
             "report_id": report.report_id,
@@ -610,7 +628,7 @@ async def detect_anomalies(request: AnalyzeLogRequest):
                 for a in report.anomalies[:50]  # 限制返回数量
             ]
         }
-    
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -621,25 +639,26 @@ async def detect_anomalies(request: AnalyzeLogRequest):
 # ==================== 趋势分析 ====================
 
 @router.get("/trends")
-async def get_anomaly_trends(days: int = Query(default=7, ge=1, le=30)):
+async def get_anomaly_trends(
+    days: int = Query(default=7, ge=1, le=30),
+    db: DatabaseManager = Depends(get_database)
+):
     """获取异常趋势"""
-    db = get_db_manager()
-    
     # 按天统计异常数量
     sql = """
-        SELECT 
+        SELECT
             DATE(created_at) as date,
             JSON_EXTRACT(statistics, '$.critical_count') as critical,
             JSON_EXTRACT(statistics, '$.error_count') as error,
             JSON_EXTRACT(statistics, '$.warning_count') as warning,
             JSON_EXTRACT(statistics, '$.total_anomalies') as total
         FROM analysis_reports
-        WHERE report_type = 'anomaly' 
+        WHERE report_type = 'anomaly'
         AND created_at >= datetime('now', '-' || %s || ' days')
         ORDER BY date
     """
     rows = db.fetch_all(sql, (days,))
-    
+
     return {
         "days": days,
         "trends": [
@@ -658,23 +677,21 @@ async def get_anomaly_trends(days: int = Query(default=7, ge=1, le=30)):
 # ==================== 统计概览 ====================
 
 @router.get("/statistics")
-async def get_insights_statistics():
+async def get_insights_statistics(db: DatabaseManager = Depends(get_database)):
     """获取日志洞察统计"""
-    db = get_db_manager()
-    
     # 任务统计
     task_stats = db.fetch_one("""
-        SELECT 
+        SELECT
             COUNT(*) as total,
             SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
             SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running,
             SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
         FROM analysis_tasks
     """)
-    
+
     # 报告统计
     report_stats = db.fetch_one("""
-        SELECT 
+        SELECT
             COUNT(*) as total_reports,
             SUM(JSON_EXTRACT(statistics, '$.total_anomalies')) as total_anomalies,
             SUM(JSON_EXTRACT(statistics, '$.critical_count')) as critical_count,
@@ -682,16 +699,16 @@ async def get_insights_statistics():
         FROM analysis_reports
         WHERE report_type = 'anomaly'
     """)
-    
+
     # 今日统计
     today_stats = db.fetch_one("""
-        SELECT 
+        SELECT
             COUNT(*) as tasks_today,
             SUM(JSON_EXTRACT(statistics, '$.total_anomalies')) as anomalies_today
         FROM analysis_reports
         WHERE report_type = 'anomaly' AND DATE(created_at) = DATE('now')
     """)
-    
+
     return {
         "tasks": {
             "total": task_stats['total'] if task_stats else 0,

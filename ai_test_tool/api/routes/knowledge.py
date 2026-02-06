@@ -4,7 +4,7 @@
 提供知识的CRUD、检索、审核等接口
 """
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -15,48 +15,16 @@ from ...knowledge import (
     KnowledgeLearner
 )
 from ...knowledge.models import KnowledgeContext
-from ...llm.chains import KnowledgeExtractionChain
 from ...utils.logger import get_logger
+from ..dependencies import (
+    get_knowledge_store,
+    get_knowledge_retriever,
+    get_rag_context_builder,
+    get_knowledge_learner
+)
 
 logger = get_logger()
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
-
-# 懒加载的服务实例
-_store: KnowledgeStore | None = None
-_retriever: KnowledgeRetriever | None = None
-_rag_builder: RAGContextBuilder | None = None
-_learner: KnowledgeLearner | None = None
-
-
-def get_store() -> KnowledgeStore:
-    global _store
-    if _store is None:
-        _store = KnowledgeStore()
-    return _store
-
-
-def get_retriever() -> KnowledgeRetriever:
-    global _retriever
-    if _retriever is None:
-        _retriever = KnowledgeRetriever(get_store())
-    return _retriever
-
-
-def get_rag_builder() -> RAGContextBuilder:
-    global _rag_builder
-    if _rag_builder is None:
-        _rag_builder = RAGContextBuilder()
-    return _rag_builder
-
-
-def get_learner() -> KnowledgeLearner:
-    global _learner
-    if _learner is None:
-        _learner = KnowledgeLearner(get_store())
-        # 设置LLM链
-        chain = KnowledgeExtractionChain()
-        _learner.set_llm_chain(chain)
-    return _learner
 
 
 # ============== 请求/响应模型 ==============
@@ -117,35 +85,24 @@ async def list_knowledge(
     scope: str | None = Query(None, description="范围"),
     keyword: str | None = Query(None, description="关键词搜索"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100)
+    page_size: int = Query(20, ge=1, le=100),
+    store: KnowledgeStore = Depends(get_knowledge_store)
 ) -> dict[str, Any]:
     """获取知识列表"""
-    store = get_store()
-    
     tag_list = tags.split(",") if tags else None
-    
-    items = store.search(
+
+    items, total = store.search_paginated(
         type=type,
         status=status,
         tags=tag_list,
         scope=scope,
         keyword=keyword,
-        limit=page_size,
-        offset=(page - 1) * page_size
+        page=page,
+        page_size=page_size
     )
-    
-    # 获取总数（简化实现，使用较大limit）
-    all_items = store.search(
-        type=type,
-        status=status,
-        tags=tag_list,
-        scope=scope,
-        keyword=keyword,
-        limit=10000
-    )
-    
+
     return {
-        "total": len(all_items),
+        "total": total,
         "page": page,
         "page_size": page_size,
         "items": [
@@ -167,12 +124,12 @@ async def list_knowledge(
 
 @router.get("/pending")
 async def list_pending_knowledge(
-    limit: int = Query(50, ge=1, le=200)
+    limit: int = Query(50, ge=1, le=200),
+    store: KnowledgeStore = Depends(get_knowledge_store)
 ) -> dict[str, Any]:
     """获取待审核知识列表"""
-    store = get_store()
     items = store.get_pending(limit)
-    
+
     return {
         "total": len(items),
         "items": [
@@ -191,21 +148,24 @@ async def list_pending_knowledge(
 
 
 @router.get("/statistics")
-async def get_statistics() -> dict[str, Any]:
+async def get_statistics(
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
     """获取知识库统计信息"""
-    store = get_store()
     return store.get_statistics()
 
 
 @router.get("/{knowledge_id}")
-async def get_knowledge(knowledge_id: str) -> dict[str, Any]:
+async def get_knowledge(
+    knowledge_id: str,
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
     """获取单个知识详情"""
-    store = get_store()
     item = store.get(knowledge_id)
-    
+
     if not item:
         raise HTTPException(status_code=404, detail="Knowledge not found")
-    
+
     return {
         "knowledge_id": item.knowledge_id,
         "title": item.title,
@@ -220,10 +180,11 @@ async def get_knowledge(knowledge_id: str) -> dict[str, Any]:
 
 
 @router.post("", status_code=201)
-async def create_knowledge(request: KnowledgeCreateRequest) -> dict[str, Any]:
+async def create_knowledge(
+    request: KnowledgeCreateRequest,
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
     """创建知识条目"""
-    store = get_store()
-    
     item = store.create(
         title=request.title,
         content=request.content,
@@ -234,9 +195,9 @@ async def create_knowledge(request: KnowledgeCreateRequest) -> dict[str, Any]:
         tags=request.tags,
         metadata=request.metadata
     )
-    
+
     logger.info(f"Created knowledge: {item.knowledge_id}")
-    
+
     return {
         "knowledge_id": item.knowledge_id,
         "title": item.title,
@@ -247,11 +208,10 @@ async def create_knowledge(request: KnowledgeCreateRequest) -> dict[str, Any]:
 @router.put("/{knowledge_id}")
 async def update_knowledge(
     knowledge_id: str,
-    request: KnowledgeUpdateRequest
+    request: KnowledgeUpdateRequest,
+    store: KnowledgeStore = Depends(get_knowledge_store)
 ) -> dict[str, Any]:
     """更新知识条目"""
-    store = get_store()
-    
     item = store.update(
         knowledge_id=knowledge_id,
         title=request.title,
@@ -262,10 +222,10 @@ async def update_knowledge(
         tags=request.tags,
         metadata=request.metadata
     )
-    
+
     if not item:
         raise HTTPException(status_code=404, detail="Knowledge not found")
-    
+
     return {
         "knowledge_id": item.knowledge_id,
         "title": item.title,
@@ -274,20 +234,22 @@ async def update_knowledge(
 
 
 @router.delete("/{knowledge_id}", status_code=204)
-async def delete_knowledge(knowledge_id: str) -> None:
+async def delete_knowledge(
+    knowledge_id: str,
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> None:
     """删除知识条目（归档）"""
-    store = get_store()
-    
     success = store.archive(knowledge_id)
     if not success:
         raise HTTPException(status_code=404, detail="Knowledge not found")
 
 
 @router.post("/review")
-async def batch_review(request: BatchReviewRequest) -> dict[str, Any]:
+async def batch_review(
+    request: BatchReviewRequest,
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
     """批量审核知识"""
-    store = get_store()
-    
     if request.action == "approve":
         count = store.approve(request.knowledge_ids)
         message = f"Approved {count} knowledge entries"
@@ -296,7 +258,7 @@ async def batch_review(request: BatchReviewRequest) -> dict[str, Any]:
         message = f"Rejected {count} knowledge entries"
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
-    
+
     return {
         "action": request.action,
         "count": count,
@@ -305,11 +267,12 @@ async def batch_review(request: BatchReviewRequest) -> dict[str, Any]:
 
 
 @router.post("/search")
-async def search_knowledge(request: KnowledgeSearchRequest) -> dict[str, Any]:
+async def search_knowledge(
+    request: KnowledgeSearchRequest,
+    retriever: KnowledgeRetriever = Depends(get_knowledge_retriever),
+    rag_builder: RAGContextBuilder = Depends(get_rag_context_builder)
+) -> dict[str, Any]:
     """语义检索知识"""
-    retriever = get_retriever()
-    rag_builder = get_rag_builder()
-    
     context = KnowledgeContext(
         query=request.query,
         types=request.types,
@@ -318,12 +281,12 @@ async def search_knowledge(request: KnowledgeSearchRequest) -> dict[str, Any]:
         top_k=request.top_k,
         min_score=request.min_score
     )
-    
+
     results = retriever.retrieve(context)
-    
+
     # 构建RAG上下文预览
     rag_context = rag_builder.build(results)
-    
+
     return {
         "total": len(results),
         "items": [
@@ -345,16 +308,17 @@ async def search_knowledge(request: KnowledgeSearchRequest) -> dict[str, Any]:
 
 
 @router.post("/learn")
-async def learn_knowledge(request: LearnRequest) -> dict[str, Any]:
+async def learn_knowledge(
+    request: LearnRequest,
+    learner: KnowledgeLearner = Depends(get_knowledge_learner)
+) -> dict[str, Any]:
     """从内容中学习知识"""
-    learner = get_learner()
-    
     created_ids = learner.learn_and_save(
         content=request.content,
         source_ref=request.source_ref,
         auto_approve=request.auto_approve
     )
-    
+
     return {
         "created_count": len(created_ids),
         "knowledge_ids": created_ids,
@@ -363,11 +327,12 @@ async def learn_knowledge(request: LearnRequest) -> dict[str, Any]:
 
 
 @router.post("/rebuild-index")
-async def rebuild_vector_index() -> dict[str, Any]:
+async def rebuild_vector_index(
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
     """重建向量索引"""
-    store = get_store()
     count = store.rebuild_vector_index()
-    
+
     return {
         "indexed_count": count,
         "message": f"Rebuilt vector index for {count} entries"

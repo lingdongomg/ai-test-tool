@@ -386,6 +386,33 @@ class KnowledgeStore:
             offset=offset
         )
         return [self._entry_to_item(e) for e in entries]
+
+    def search_paginated(
+        self,
+        type: str | None = None,
+        status: str | None = None,
+        tags: list[str] | None = None,
+        scope: str | None = None,
+        keyword: str | None = None,
+        page: int = 1,
+        page_size: int = 20
+    ) -> tuple[list[KnowledgeItem], int]:
+        """
+        分页搜索知识条目
+
+        Returns:
+            元组: (知识条目列表, 总数)
+        """
+        entries, total = self.knowledge_repo.search_paginated(
+            type=KnowledgeType(type) if type else None,
+            status=KnowledgeStatus(status) if status else None,
+            tags=tags,
+            scope=scope,
+            keyword=keyword,
+            page=page,
+            page_size=page_size
+        )
+        return [self._entry_to_item(e) for e in entries], total
     
     def get_pending(self, limit: int = 100) -> list[KnowledgeItem]:
         """获取待审核的知识"""
