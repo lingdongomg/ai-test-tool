@@ -352,7 +352,7 @@ const confirmSave = async () => {
 
 // 查看详情
 const handleView = (row: any) => {
-  // TODO: 打开详情抽屉
+  MessagePlugin.info(`请求详情: ${row.method} ${row.url}（详情抽屉开发中）`)
 }
 
 // 执行检查

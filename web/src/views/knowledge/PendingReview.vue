@@ -4,130 +4,131 @@
     <div class="page-header">
       <h2>待审核知识</h2>
       <div class="header-actions">
-        <el-button @click="loadList">
-          <el-icon><Refresh /></el-icon>
+        <t-button @click="loadList">
+          <template #icon><refresh-icon /></template>
           刷新
-        </el-button>
+        </t-button>
       </div>
     </div>
 
-    <el-alert
+    <t-alert
       v-if="pendingList.length > 0"
-      type="warning"
+      theme="warning"
       :closable="false"
-      show-icon
       class="alert-box"
     >
       有 {{ pendingList.length }} 条知识等待审核。这些知识来自AI自动学习，请确认其准确性后再批准。
-    </el-alert>
+    </t-alert>
 
-    <el-card class="list-card">
+    <t-card class="list-card">
       <div class="batch-actions" v-if="selectedIds.length > 0">
         <span>已选择 {{ selectedIds.length }} 项</span>
-        <el-button type="success" size="small" @click="batchApprove">批量通过</el-button>
-        <el-button type="danger" size="small" @click="batchReject">批量拒绝</el-button>
+        <t-button theme="success" size="small" @click="batchApprove">批量通过</t-button>
+        <t-button theme="danger" size="small" @click="batchReject">批量拒绝</t-button>
       </div>
 
-      <el-table
+      <t-table
         :data="pendingList"
-        v-loading="loading"
-        @selection-change="handleSelectionChange"
+        :loading="loading"
+        :selected-row-keys="selectedIds"
+        @select-change="handleSelectionChange"
+        row-key="knowledge_id"
+        stripe
       >
-        <el-table-column type="selection" width="55" />
-        <el-table-column prop="title" label="标题" min-width="200">
-          <template #default="{ row }">
-            <el-link type="primary" @click="showDetail(row)">{{ row.title }}</el-link>
+        <t-table-column type="selection" width="55" />
+        <t-table-column prop="title" label="标题" min-width="200">
+          <template #cell="{ row }">
+            <t-link theme="primary" @click="showDetail(row)">{{ row.title }}</t-link>
           </template>
-        </el-table-column>
-        <el-table-column prop="type" label="类型" width="120">
-          <template #default="{ row }">
-            <el-tag :type="getTypeTagType(row.type)" size="small">
+        </t-table-column>
+        <t-table-column prop="type" label="类型" width="120">
+          <template #cell="{ row }">
+            <t-tag :theme="getTypeTagType(row.type)" size="small">
               {{ getTypeName(row.type) }}
-            </el-tag>
+            </t-tag>
           </template>
-        </el-table-column>
-        <el-table-column prop="content" label="内容预览" min-width="300">
-          <template #default="{ row }">
+        </t-table-column>
+        <t-table-column prop="content" label="内容预览" min-width="300">
+          <template #cell="{ row }">
             <div class="content-preview">{{ row.content?.slice(0, 100) }}...</div>
           </template>
-        </el-table-column>
-        <el-table-column prop="scope" label="适用范围" width="150">
-          <template #default="{ row }">
+        </t-table-column>
+        <t-table-column prop="scope" label="适用范围" width="150">
+          <template #cell="{ row }">
             <code v-if="row.scope">{{ row.scope }}</code>
             <span v-else class="text-muted">-</span>
           </template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
-          <template #default="{ row }">
-            <el-button type="success" link size="small" @click="approveOne(row)">通过</el-button>
-            <el-button type="warning" link size="small" @click="editAndApprove(row)">编辑</el-button>
-            <el-button type="danger" link size="small" @click="rejectOne(row)">拒绝</el-button>
+        </t-table-column>
+        <t-table-column label="操作" width="180" fixed="right">
+          <template #cell="{ row }">
+            <t-button variant="text" theme="success" size="small" @click="approveOne(row)">通过</t-button>
+            <t-button variant="text" theme="warning" size="small" @click="editAndApprove(row)">编辑</t-button>
+            <t-button variant="text" theme="danger" size="small" @click="rejectOne(row)">拒绝</t-button>
           </template>
-        </el-table-column>
-      </el-table>
+        </t-table-column>
+      </t-table>
 
-      <el-empty v-if="!loading && pendingList.length === 0" description="暂无待审核知识" />
-    </el-card>
+      <t-empty v-if="!loading && pendingList.length === 0" description="暂无待审核知识" />
+    </t-card>
 
     <!-- 详情/编辑对话框 -->
-    <el-dialog
-      v-model="showEditDialog"
-      :title="isEditing ? '编辑并审核' : '知识详情'"
+    <t-dialog
+      v-model:visible="showEditDialog"
+      :header="isEditing ? '编辑并审核' : '知识详情'"
       width="700px"
     >
-      <el-form v-if="currentKnowledge" :model="editForm" label-width="100px">
-        <el-form-item label="标题">
-          <el-input v-model="editForm.title" :disabled="!isEditing" />
-        </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="editForm.type" :disabled="!isEditing" style="width: 200px">
-            <el-option label="项目配置" value="project_config" />
-            <el-option label="业务规则" value="business_rule" />
-            <el-option label="模块知识" value="module_context" />
-            <el-option label="测试经验" value="test_experience" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="内容">
-          <el-input
+      <t-form v-if="currentKnowledge" :data="editForm" label-width="100px">
+        <t-form-item label="标题">
+          <t-input v-model="editForm.title" :disabled="!isEditing" />
+        </t-form-item>
+        <t-form-item label="类型">
+          <t-select v-model="editForm.type" :disabled="!isEditing" style="width: 200px">
+            <t-option label="项目配置" value="project_config" />
+            <t-option label="业务规则" value="business_rule" />
+            <t-option label="模块知识" value="module_context" />
+            <t-option label="测试经验" value="test_experience" />
+          </t-select>
+        </t-form-item>
+        <t-form-item label="内容">
+          <t-textarea
             v-model="editForm.content"
-            type="textarea"
             :rows="8"
             :disabled="!isEditing"
           />
-        </el-form-item>
-        <el-form-item label="适用范围">
-          <el-input v-model="editForm.scope" :disabled="!isEditing" />
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-select
+        </t-form-item>
+        <t-form-item label="适用范围">
+          <t-input v-model="editForm.scope" :disabled="!isEditing" />
+        </t-form-item>
+        <t-form-item label="标签">
+          <t-select
             v-model="editForm.tags"
             multiple
             filterable
-            allow-create
+            creatable
             :disabled="!isEditing"
             style="width: 100%"
           />
-        </el-form-item>
-      </el-form>
+        </t-form-item>
+      </t-form>
       <template #footer>
-        <el-button @click="showEditDialog = false">取消</el-button>
+        <t-button @click="showEditDialog = false">取消</t-button>
         <template v-if="isEditing">
-          <el-button type="primary" @click="saveAndApprove" :loading="saving">保存并通过</el-button>
+          <t-button theme="primary" @click="saveAndApprove" :loading="saving">保存并通过</t-button>
         </template>
         <template v-else>
-          <el-button type="success" @click="approveOne(currentKnowledge!)">通过</el-button>
-          <el-button type="warning" @click="startEdit">编辑</el-button>
-          <el-button type="danger" @click="rejectOne(currentKnowledge!)">拒绝</el-button>
+          <t-button theme="success" @click="approveOne(currentKnowledge!)">通过</t-button>
+          <t-button theme="warning" @click="startEdit">编辑</t-button>
+          <t-button theme="danger" @click="rejectOne(currentKnowledge!)">拒绝</t-button>
         </template>
       </template>
-    </el-dialog>
+    </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { RefreshIcon } from 'tdesign-icons-vue-next'
 
 const API_BASE = '/api/v2/knowledge'
 
@@ -175,7 +176,7 @@ const loadList = async () => {
     const data = await response.json()
     pendingList.value = data.items || []
   } catch (error) {
-    ElMessage.error('加载失败')
+    MessagePlugin.error('加载失败')
   } finally {
     loading.value = false
   }
@@ -230,7 +231,7 @@ const saveAndApprove = async () => {
     showEditDialog.value = false
     loadList()
   } catch (error) {
-    ElMessage.error('操作失败')
+    MessagePlugin.error('操作失败')
   } finally {
     saving.value = false
   }
@@ -247,7 +248,7 @@ const doReview = async (ids: string[], action: 'approve' | 'reject') => {
   if (!response.ok) throw new Error('审核失败')
 
   const result = await response.json()
-  ElMessage.success(result.message)
+  MessagePlugin.success(result.message)
 }
 
 // 通过单个
@@ -257,44 +258,74 @@ const approveOne = async (row: any) => {
     showEditDialog.value = false
     loadList()
   } catch (error) {
-    ElMessage.error('操作失败')
+    MessagePlugin.error('操作失败')
   }
 }
 
 // 拒绝单个
 const rejectOne = async (row: any) => {
-  try {
-    await ElMessageBox.confirm('确定要拒绝这条知识吗？', '确认拒绝', { type: 'warning' })
-    await doReview([row.knowledge_id], 'reject')
-    showEditDialog.value = false
-    loadList()
-  } catch (error) {
-    // 用户取消
-  }
+  const confirmDialog = DialogPlugin.confirm({
+    header: '确认拒绝',
+    body: '确定要拒绝这条知识吗？',
+    onConfirm: async () => {
+      try {
+        await doReview([row.knowledge_id], 'reject')
+        showEditDialog.value = false
+        loadList()
+      } catch (error) {
+        MessagePlugin.error('拒绝失败')
+      }
+    },
+    onClose: () => {
+      confirmDialog.destroy()
+    }
+  })
 }
 
 // 批量通过
 const batchApprove = async () => {
-  try {
-    await ElMessageBox.confirm(`确定要通过选中的 ${selectedIds.value.length} 条知识吗？`, '批量通过')
-    await doReview(selectedIds.value, 'approve')
-    selectedIds.value = []
-    loadList()
-  } catch (error) {
-    // 用户取消
-  }
+  if (selectedIds.value.length === 0) return
+
+  const confirmDialog = DialogPlugin.confirm({
+    header: '批量通过',
+    body: `确定要通过选中的 ${selectedIds.value.length} 条知识吗？`,
+    onConfirm: async () => {
+      try {
+        await doReview(selectedIds.value, 'approve')
+        MessagePlugin.success(`已通过 ${selectedIds.value.length} 条知识`)
+        selectedIds.value = []
+        loadList()
+      } catch (error) {
+        MessagePlugin.error('批量通过失败')
+      }
+    },
+    onClose: () => {
+      confirmDialog.destroy()
+    }
+  })
 }
 
 // 批量拒绝
 const batchReject = async () => {
-  try {
-    await ElMessageBox.confirm(`确定要拒绝选中的 ${selectedIds.value.length} 条知识吗？`, '批量拒绝', { type: 'warning' })
-    await doReview(selectedIds.value, 'reject')
-    selectedIds.value = []
-    loadList()
-  } catch (error) {
-    // 用户取消
-  }
+  if (selectedIds.value.length === 0) return
+
+  const confirmDialog = DialogPlugin.confirm({
+    header: '批量拒绝',
+    body: `确定要拒绝选中的 ${selectedIds.value.length} 条知识吗？`,
+    onConfirm: async () => {
+      try {
+        await doReview(selectedIds.value, 'reject')
+        MessagePlugin.success(`已拒绝 ${selectedIds.value.length} 条知识`)
+        selectedIds.value = []
+        loadList()
+      } catch (error) {
+        MessagePlugin.error('批量拒绝失败')
+      }
+    },
+    onClose: () => {
+      confirmDialog.destroy()
+    }
+  })
 }
 
 // 初始化

@@ -561,10 +561,87 @@ class ScenarioDetector:
         if scenarios and scenarios[0].confidence >= 0.7:
             return scenarios
 
-        # TODO: 实现LLM场景分类
-        # 这里可以调用LLM进行更精确的场景分类
-        # 当前版本先返回原结果
-        return scenarios
+        try:
+            # 构建 LLM 提示
+            scenario_types = [st.value for st in ScenarioType]
+            prompt = f"""分析以下内容，判断最可能的分析场景类型。
+
+可选场景类型：
+{', '.join(scenario_types)}
+
+用户提示：{hint}
+
+内容摘要（前500字符）：
+{content[:500]}
+
+请以JSON格式返回，包含：
+- scenario_type: 场景类型（必须是上述类型之一）
+- confidence: 置信度（0.0-1.0）
+- reason: 判断理由
+
+只返回JSON，不要其他内容。"""
+
+            # 调用 LLM
+            llm_response = self.llm_provider.generate(prompt)
+
+            # 解析响应
+            import json
+            # 尝试从响应中提取 JSON
+            response_text = llm_response.strip()
+            if response_text.startswith('```'):
+                # 移除代码块标记
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+
+            result = json.loads(response_text)
+            scenario_type_str = result.get('scenario_type', '')
+            confidence = float(result.get('confidence', 0.5))
+            reason = result.get('reason', '')
+
+            # 验证场景类型
+            try:
+                scenario_type = ScenarioType(scenario_type_str)
+            except ValueError:
+                logger.warning(f"LLM返回了无效的场景类型: {scenario_type_str}")
+                return scenarios
+
+            # 创建 LLM 识别的场景
+            llm_scenario = AnalysisScenario(
+                scenario_type=scenario_type,
+                confidence=confidence,
+                match_method=MatchMethod.LLM,
+                description=reason,
+                indicators=[ScenarioIndicator(
+                    name="llm_classification",
+                    value=scenario_type_str,
+                    weight=confidence
+                )],
+                metadata={"llm_reason": reason}
+            )
+
+            # 合并结果：LLM 结果与现有结果
+            if scenarios:
+                # 如果 LLM 结果与现有最高置信度场景类型相同，增强置信度
+                if scenarios[0].scenario_type == scenario_type:
+                    scenarios[0].confidence = min(0.95, scenarios[0].confidence + confidence * 0.3)
+                    scenarios[0].indicators.extend(llm_scenario.indicators)
+                    return scenarios
+                # 否则，将 LLM 结果添加到列表并重新排序
+                scenarios.append(llm_scenario)
+                scenarios.sort(key=lambda s: s.confidence, reverse=True)
+            else:
+                scenarios = [llm_scenario]
+
+            return scenarios
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"LLM响应JSON解析失败: {e}")
+            return scenarios
+        except Exception as e:
+            logger.warning(f"LLM场景分类失败: {e}")
+            return scenarios
 
     def add_rule(self, rule: DetectionRule) -> None:
         """添加自定义规则"""

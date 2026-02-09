@@ -20,7 +20,7 @@ from ..database.models import (
     ScenarioExecution,
     StepResult,
     ScenarioStatus,
-    StepType,
+    ScenarioStepType,
     TriggerType,
     TestResultStatus
 )
@@ -222,16 +222,16 @@ class ScenarioExecutor:
         )
         
         try:
-            if step.step_type == StepType.REQUEST:
+            if step.step_type == ScenarioStepType.REQUEST:
                 await self._execute_request_step(session, step, base_url, result)
-            elif step.step_type == StepType.WAIT:
+            elif step.step_type == ScenarioStepType.WAIT:
                 await self._execute_wait_step(step, result)
-            elif step.step_type == StepType.CONDITION:
+            elif step.step_type == ScenarioStepType.CONDITION:
                 await self._execute_condition_step(step, result)
-            elif step.step_type == StepType.EXTRACT:
+            elif step.step_type == ScenarioStepType.EXTRACT:
                 # 提取步骤通常在请求步骤中处理
                 pass
-            elif step.step_type == StepType.ASSERT:
+            elif step.step_type == ScenarioStepType.ASSERT:
                 # 断言步骤通常在请求步骤中处理
                 pass
         
@@ -423,12 +423,13 @@ class ScenarioExecutor:
         hooks: list[dict[str, Any]],
         hook_type: str
     ) -> None:
-        """执行钩子"""
-        self.logger.debug(f"   执行 {hook_type} 钩子")
+        """执行钩子（尚未实现具体逻辑）"""
+        if not hooks:
+            return
+        self.logger.debug(f"   执行 {hook_type} 钩子（{len(hooks)} 个，跳过：钩子执行尚未实现）")
         for hook in hooks:
             hook_name = hook.get('name', hook_type)
-            self.logger.debug(f"      {hook_name}")
-            # TODO: 实现钩子逻辑
+            self.logger.debug(f"      跳过钩子: {hook_name}")
     
     def to_execution_model(
         self,

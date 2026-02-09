@@ -55,7 +55,7 @@ class LLMConfig(BaseModel):
         default=False,
         description="是否开启LangChain调试模式"
     )
-    
+
     @classmethod
     def from_env(cls) -> Self:
         """从环境变量加载配置"""
@@ -126,13 +126,99 @@ class OutputConfig(BaseModel):
     )
 
 
+class SecurityConfig(BaseModel):
+    """安全配置"""
+    # 环境标识
+    environment: Literal["development", "staging", "production"] = Field(
+        default="development",
+        description="运行环境"
+    )
+    debug: bool = Field(
+        default=False,
+        description="调试模式（生产环境应关闭）"
+    )
+
+    # CORS 配置
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:5173"],
+        description="允许的跨域来源（生产环境使用）"
+    )
+    cors_allow_credentials: bool = Field(
+        default=True,
+        description="是否允许携带凭证"
+    )
+
+    # 文件上传配置
+    upload_max_size: int = Field(
+        default=10 * 1024 * 1024,  # 10MB
+        description="最大上传文件大小（字节）"
+    )
+    upload_allowed_extensions: set[str] = Field(
+        default={".log", ".txt", ".json", ".jsonl", ".csv"},
+        description="允许的文件扩展名"
+    )
+    upload_allowed_mimetypes: set[str] = Field(
+        default={
+            "text/plain",
+            "application/json",
+            "text/csv",
+            "application/octet-stream"  # 用于 .log 文件
+        },
+        description="允许的MIME类型"
+    )
+
+    @property
+    def is_production(self) -> bool:
+        """是否为生产环境"""
+        return self.environment == "production"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """获取CORS允许的来源列表"""
+        if self.is_production:
+            return self.cors_origins
+        return ["*"]  # 开发环境允许所有来源
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """从环境变量加载配置"""
+        cors_origins_str = os.getenv("CORS_ORIGINS", "")
+        cors_origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()] \
+            if cors_origins_str else ["http://localhost:3000", "http://localhost:5173"]
+
+        return cls(
+            environment=os.getenv("ENVIRONMENT", "development"),  # type: ignore
+            debug=os.getenv("DEBUG", "false").lower() in ("true", "1", "yes"),
+            cors_origins=cors_origins,
+            cors_allow_credentials=os.getenv("CORS_CREDENTIALS", "true").lower() in ("true", "1", "yes"),
+            upload_max_size=int(os.getenv("UPLOAD_MAX_SIZE", str(10 * 1024 * 1024))),
+        )
+
+
+class TaskConfig(BaseModel):
+    """后台任务配置"""
+    max_workers: int = Field(
+        default=4,
+        description="后台任务最大工作线程数"
+    )
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """从环境变量加载配置"""
+        return cls(
+            max_workers=int(os.getenv("TASK_MAX_WORKERS", "4"))
+        )
+
+
 class AppConfig(BaseModel):
     """应用总配置"""
     llm: LLMConfig = Field(default_factory=LLMConfig)
     parser: LogParserConfig = Field(default_factory=LogParserConfig)
     test: TestConfig = Field(default_factory=TestConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
-    
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    task: TaskConfig = Field(default_factory=TaskConfig)
+
     @classmethod
     def load(cls, config_path: str | None = None) -> Self:
         """加载配置"""
@@ -141,13 +227,15 @@ class AppConfig(BaseModel):
             with open(config_path, encoding='utf-8') as f:
                 data = yaml.safe_load(f)
                 return cls(**data)
-        
+
         # 从环境变量加载
         return cls(
             llm=LLMConfig.from_env(),
             parser=LogParserConfig(),
             test=TestConfig(),
-            output=OutputConfig()
+            output=OutputConfig(),
+            security=SecurityConfig.from_env(),
+            task=TaskConfig.from_env()
         )
 
 

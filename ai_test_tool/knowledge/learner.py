@@ -245,7 +245,7 @@ class KnowledgeLearner:
             if isinstance(headers, str):
                 try:
                     headers = json.loads(headers)
-                except:
+                except (json.JSONDecodeError, ValueError):
                     continue
             
             for key, value in headers.items():
@@ -319,7 +319,7 @@ class KnowledgeLearner:
         if isinstance(headers, str):
             try:
                 headers = json.loads(headers)
-            except:
+            except (json.JSONDecodeError, ValueError):
                 headers = {}
         
         if headers:

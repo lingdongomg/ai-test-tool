@@ -25,9 +25,12 @@ from .models import (
     ExecutionType,
     ResultType,
     EndpointSourceType,
-    StepType,
+    ScenarioStepType,
     ScenarioStatus,
     ChangeType,
+    KnowledgeType,
+    KnowledgeStatus,
+    KnowledgeSource,
     # 模型
     AnalysisTask,
     ParsedRequestRecord,
@@ -42,6 +45,9 @@ from .models import (
     ScenarioStep,
     ScenarioExecution,
     StepResult,
+    KnowledgeEntry,
+    KnowledgeHistory,
+    KnowledgeUsage,
 )
 
 from .repository import (
@@ -61,6 +67,9 @@ from .repository import (
     ScenarioStepRepository,
     ScenarioExecutionRepository,
     StepResultRepository,
+    KnowledgeRepository,
+    KnowledgeHistoryRepository,
+    KnowledgeUsageRepository,
 )
 
 
@@ -82,9 +91,12 @@ __all__ = [
     'ExecutionType',
     'ResultType',
     'EndpointSourceType',
-    'StepType',
+    'ScenarioStepType',
     'ScenarioStatus',
     'ChangeType',
+    'KnowledgeType',
+    'KnowledgeStatus',
+    'KnowledgeSource',
     # 模型
     'BaseModel',
     'AnalysisTask',
@@ -100,6 +112,9 @@ __all__ = [
     'ScenarioStep',
     'ScenarioExecution',
     'StepResult',
+    'KnowledgeEntry',
+    'KnowledgeHistory',
+    'KnowledgeUsage',
     # 仓库
     'BaseRepository',
     'TaskRepository',
@@ -115,4 +130,7 @@ __all__ = [
     'ScenarioStepRepository',
     'ScenarioExecutionRepository',
     'StepResultRepository',
+    'KnowledgeRepository',
+    'KnowledgeHistoryRepository',
+    'KnowledgeUsageRepository',
 ]

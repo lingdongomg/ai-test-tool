@@ -46,7 +46,7 @@ from .models import (
     ChainContext,
     StepStatus,
     ChainStatus,
-    StepType,
+    ReasoningStepType,
 )
 from .engine import ChainOfThoughtEngine, create_engine
 from .chains import (
@@ -71,7 +71,7 @@ __all__ = [
     "ChainContext",
     "StepStatus",
     "ChainStatus",
-    "StepType",
+    "ReasoningStepType",
     # 引擎
     "ChainOfThoughtEngine",
     "create_engine",

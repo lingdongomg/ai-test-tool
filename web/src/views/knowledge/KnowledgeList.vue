@@ -4,185 +4,184 @@
     <div class="page-header">
       <h2>知识库管理</h2>
       <div class="header-actions">
-        <el-button type="primary" @click="showCreateDialog = true">
-          <el-icon><Plus /></el-icon>
+        <t-button theme="primary" @click="showCreateDialog = true">
+          <template #icon><add-icon /></template>
           添加知识
-        </el-button>
-        <el-button @click="refreshList">
-          <el-icon><Refresh /></el-icon>
+        </t-button>
+        <t-button @click="refreshList">
+          <template #icon><refresh-icon /></template>
           刷新
-        </el-button>
+        </t-button>
       </div>
     </div>
 
     <!-- 统计信息 -->
-    <el-row :gutter="20" class="stats-row">
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
+    <t-row :gutter="20" class="stats-row">
+      <t-col :span="6">
+        <t-card hover class="stat-card">
           <div class="stat-value">{{ statistics.total || 0 }}</div>
           <div class="stat-label">知识总数</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
+        </t-card>
+      </t-col>
+      <t-col :span="6">
+        <t-card hover class="stat-card">
           <div class="stat-value">{{ statistics.by_status?.active || 0 }}</div>
           <div class="stat-label">活跃知识</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card pending">
+        </t-card>
+      </t-col>
+      <t-col :span="6">
+        <t-card hover class="stat-card pending">
           <div class="stat-value">{{ statistics.by_status?.pending || 0 }}</div>
           <div class="stat-label">待审核</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="hover" class="stat-card">
+        </t-card>
+      </t-col>
+      <t-col :span="6">
+        <t-card hover class="stat-card">
           <div class="stat-value">{{ statistics.by_status?.archived || 0 }}</div>
           <div class="stat-label">已归档</div>
-        </el-card>
-      </el-col>
-    </el-row>
+        </t-card>
+      </t-col>
+    </t-row>
 
     <!-- 筛选区域 -->
-    <el-card class="filter-card">
-      <el-form :inline="true" class="filter-form">
-        <el-form-item label="知识类型">
-          <el-select v-model="filters.type" placeholder="全部" clearable style="width: 150px">
-            <el-option label="项目配置" value="project_config" />
-            <el-option label="业务规则" value="business_rule" />
-            <el-option label="模块知识" value="module_context" />
-            <el-option label="测试经验" value="test_experience" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
-            <el-option label="活跃" value="active" />
-            <el-option label="待审核" value="pending" />
-            <el-option label="已归档" value="archived" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-input v-model="filters.tags" placeholder="多个用逗号分隔" style="width: 200px" />
-        </el-form-item>
-        <el-form-item label="关键词">
-          <el-input v-model="filters.keyword" placeholder="搜索标题或内容" style="width: 200px" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">搜索</el-button>
-          <el-button @click="resetFilters">重置</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
+    <t-card class="filter-card">
+      <t-form :inline="true" class="filter-form">
+        <t-form-item label="知识类型">
+          <t-select v-model="filters.type" placeholder="全部" clearable style="width: 150px">
+            <t-option label="项目配置" value="project_config" />
+            <t-option label="业务规则" value="business_rule" />
+            <t-option label="模块知识" value="module_context" />
+            <t-option label="测试经验" value="test_experience" />
+          </t-select>
+        </t-form-item>
+        <t-form-item label="状态">
+          <t-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+            <t-option label="活跃" value="active" />
+            <t-option label="待审核" value="pending" />
+            <t-option label="已归档" value="archived" />
+          </t-select>
+        </t-form-item>
+        <t-form-item label="标签">
+          <t-input v-model="filters.tags" placeholder="多个用逗号分隔" style="width: 200px" />
+        </t-form-item>
+        <t-form-item label="关键词">
+          <t-input v-model="filters.keyword" placeholder="搜索标题或内容" style="width: 200px" />
+        </t-form-item>
+        <t-form-item>
+          <t-button theme="primary" @click="handleSearch">搜索</t-button>
+          <t-button @click="resetFilters">重置</t-button>
+        </t-form-item>
+      </t-form>
+    </t-card>
 
     <!-- 知识列表 -->
-    <el-card class="list-card">
-      <el-table :data="knowledgeList" v-loading="loading" stripe>
-        <el-table-column prop="title" label="标题" min-width="200">
-          <template #default="{ row }">
-            <el-link type="primary" @click="showDetail(row)">{{ row.title }}</el-link>
+    <t-card class="list-card">
+      <t-table :data="knowledgeList" :loading="loading" stripe>
+        <t-table-column prop="title" label="标题" min-width="200">
+          <template #cell="{ row }">
+            <t-link theme="primary" @click="showDetail(row)">{{ row.title }}</t-link>
           </template>
-        </el-table-column>
-        <el-table-column prop="type" label="类型" width="120">
-          <template #default="{ row }">
-            <el-tag :type="getTypeTagType(row.type)" size="small">
+        </t-table-column>
+        <t-table-column prop="type" label="类型" width="120">
+          <template #cell="{ row }">
+            <t-tag :theme="getTypeTagType(row.type)" size="small">
               {{ getTypeName(row.type) }}
-            </el-tag>
+            </t-tag>
           </template>
-        </el-table-column>
-        <el-table-column prop="scope" label="适用范围" width="150">
-          <template #default="{ row }">
+        </t-table-column>
+        <t-table-column prop="scope" label="适用范围" width="150">
+          <template #cell="{ row }">
             <code v-if="row.scope">{{ row.scope }}</code>
             <span v-else class="text-muted">-</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="tags" label="标签" width="200">
-          <template #default="{ row }">
-            <el-tag v-for="tag in row.tags?.slice(0, 3)" :key="tag" size="small" class="tag-item">
+        </t-table-column>
+        <t-table-column prop="tags" label="标签" width="200">
+          <template #cell="{ row }">
+            <t-tag v-for="tag in row.tags?.slice(0, 3)" :key="tag" size="small" class="tag-item">
               {{ tag }}
-            </el-tag>
+            </t-tag>
             <span v-if="row.tags?.length > 3" class="text-muted">+{{ row.tags.length - 3 }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="priority" label="优先级" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.priority > 0" type="warning" size="small">{{ row.priority }}</el-tag>
+        </t-table-column>
+        <t-table-column prop="priority" label="优先级" width="80" align="center">
+          <template #cell="{ row }">
+            <t-tag v-if="row.priority > 0" theme="warning" size="small">{{ row.priority }}</t-tag>
             <span v-else>-</span>
           </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="editKnowledge(row)">编辑</el-button>
-            <el-button type="danger" link size="small" @click="deleteKnowledge(row)">删除</el-button>
+        </t-table-column>
+        <t-table-column label="操作" width="150" fixed="right">
+          <template #cell="{ row }">
+            <t-button variant="text" size="small" @click="editKnowledge(row)">编辑</t-button>
+            <t-button variant="text" theme="danger" size="small" @click="deleteKnowledge(row)">删除</t-button>
           </template>
-        </el-table-column>
-      </el-table>
+        </t-table-column>
+      </t-table>
 
-      <el-pagination
-        v-model:current-page="pagination.page"
+      <t-pagination
+        v-model:current="pagination.page"
         v-model:page-size="pagination.pageSize"
         :total="pagination.total"
-        :page-sizes="[10, 20, 50, 100]"
-        layout="total, sizes, prev, pager, next"
+        :page-size-options="[10, 20, 50, 100]"
+        show-jumper
         class="pagination"
-        @size-change="handleSizeChange"
-        @current-change="handlePageChange"
+        @change="handlePageChange"
+        @page-size-change="handleSizeChange"
       />
-    </el-card>
+    </t-card>
 
     <!-- 创建/编辑对话框 -->
-    <el-dialog
-      v-model="showCreateDialog"
-      :title="editingKnowledge ? '编辑知识' : '添加知识'"
+    <t-dialog
+      v-model:visible="showCreateDialog"
+      :header="editingKnowledge ? '编辑知识' : '添加知识'"
       width="700px"
     >
-      <el-form :model="formData" label-width="100px">
-        <el-form-item label="标题" required>
-          <el-input v-model="formData.title" placeholder="简洁描述知识内容" />
-        </el-form-item>
-        <el-form-item label="内容" required>
-          <el-input
+      <t-form :data="formData" label-width="100px">
+        <t-form-item label="标题" required>
+          <t-input v-model="formData.title" placeholder="简洁描述知识内容" />
+        </t-form-item>
+        <t-form-item label="内容" required>
+          <t-textarea
             v-model="formData.content"
-            type="textarea"
             :rows="6"
             placeholder="详细描述知识内容，包含具体的配置值、规则等"
           />
-        </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="formData.type" style="width: 200px">
-            <el-option label="项目配置" value="project_config" />
-            <el-option label="业务规则" value="business_rule" />
-            <el-option label="模块知识" value="module_context" />
-            <el-option label="测试经验" value="test_experience" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="子分类">
-          <el-input v-model="formData.category" placeholder="可选，如 auth, header 等" />
-        </el-form-item>
-        <el-form-item label="适用范围">
-          <el-input v-model="formData.scope" placeholder="如 /api/live/* 或模块名" />
-        </el-form-item>
-        <el-form-item label="优先级">
-          <el-input-number v-model="formData.priority" :min="0" :max="10" />
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-select
+        </t-form-item>
+        <t-form-item label="类型">
+          <t-select v-model="formData.type" style="width: 200px">
+            <t-option label="项目配置" value="project_config" />
+            <t-option label="业务规则" value="business_rule" />
+            <t-option label="模块知识" value="module_context" />
+            <t-option label="测试经验" value="test_experience" />
+          </t-select>
+        </t-form-item>
+        <t-form-item label="子分类">
+          <t-input v-model="formData.category" placeholder="可选，如 auth, header 等" />
+        </t-form-item>
+        <t-form-item label="适用范围">
+          <t-input v-model="formData.scope" placeholder="如 /api/live/* 或模块名" />
+        </t-form-item>
+        <t-form-item label="优先级">
+          <t-input-number v-model="formData.priority" :min="0" :max="10" />
+        </t-form-item>
+        <t-form-item label="标签">
+          <t-select
             v-model="formData.tags"
             multiple
             filterable
-            allow-create
+            creatable
             placeholder="输入并回车添加"
             style="width: 100%"
           />
-        </el-form-item>
-      </el-form>
+        </t-form-item>
+      </t-form>
       <template #footer>
-        <el-button @click="showCreateDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveKnowledge" :loading="saving">保存</el-button>
+        <t-button @click="showCreateDialog = false">取消</t-button>
+        <t-button theme="primary" @click="saveKnowledge" :loading="saving">保存</t-button>
       </template>
-    </el-dialog>
+    </t-dialog>
 
     <!-- 详情对话框 -->
-    <el-dialog v-model="showDetailDialog" title="知识详情" width="600px">
+    <t-dialog v-model:visible="showDetailDialog" header="知识详情" width="600px">
       <div v-if="detailKnowledge" class="knowledge-detail">
         <div class="detail-item">
           <label>标题：</label>
@@ -190,9 +189,9 @@
         </div>
         <div class="detail-item">
           <label>类型：</label>
-          <el-tag :type="getTypeTagType(detailKnowledge.type)" size="small">
+          <t-tag :theme="getTypeTagType(detailKnowledge.type)" size="small">
             {{ getTypeName(detailKnowledge.type) }}
-          </el-tag>
+          </t-tag>
         </div>
         <div class="detail-item">
           <label>内容：</label>
@@ -204,19 +203,19 @@
         </div>
         <div class="detail-item" v-if="detailKnowledge.tags?.length">
           <label>标签：</label>
-          <el-tag v-for="tag in detailKnowledge.tags" :key="tag" size="small" class="tag-item">
+          <t-tag v-for="tag in detailKnowledge.tags" :key="tag" size="small" class="tag-item">
             {{ tag }}
-          </el-tag>
+          </t-tag>
         </div>
       </div>
-    </el-dialog>
+    </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { AddIcon, RefreshIcon } from 'tdesign-icons-vue-next'
 
 const API_BASE = '/api/v2/knowledge'
 
@@ -288,11 +287,11 @@ const loadList = async () => {
 
     const response = await fetch(`${API_BASE}?${params}`)
     const data = await response.json()
-    
+
     knowledgeList.value = data.items || []
     pagination.total = data.total || 0
   } catch (error) {
-    ElMessage.error('加载失败')
+    MessagePlugin.error('加载失败')
   } finally {
     loading.value = false
   }
@@ -361,7 +360,7 @@ const editKnowledge = (row: any) => {
 // 保存
 const saveKnowledge = async () => {
   if (!formData.title || !formData.content) {
-    ElMessage.warning('请填写标题和内容')
+    MessagePlugin.warning('请填写标题和内容')
     return
   }
 
@@ -379,7 +378,7 @@ const saveKnowledge = async () => {
     })
 
     if (response.ok) {
-      ElMessage.success(editingKnowledge.value ? '更新成功' : '创建成功')
+      MessagePlugin.success(editingKnowledge.value ? '更新成功' : '创建成功')
       showCreateDialog.value = false
       resetForm()
       refreshList()
@@ -387,7 +386,7 @@ const saveKnowledge = async () => {
       throw new Error('保存失败')
     }
   } catch (error) {
-    ElMessage.error('保存失败')
+    MessagePlugin.error('保存失败')
   } finally {
     saving.value = false
   }
@@ -395,22 +394,27 @@ const saveKnowledge = async () => {
 
 // 删除
 const deleteKnowledge = async (row: any) => {
-  try {
-    await ElMessageBox.confirm('确定要删除这条知识吗？', '确认删除', {
-      type: 'warning'
-    })
+  const confirmDialog = DialogPlugin.confirm({
+    header: '确认删除',
+    body: '确定要删除这条知识吗？',
+    onConfirm: async () => {
+      try {
+        const response = await fetch(`${API_BASE}/${row.knowledge_id}`, {
+          method: 'DELETE'
+        })
 
-    const response = await fetch(`${API_BASE}/${row.knowledge_id}`, {
-      method: 'DELETE'
-    })
-
-    if (response.ok) {
-      ElMessage.success('删除成功')
-      refreshList()
+        if (response.ok) {
+          MessagePlugin.success('删除成功')
+          refreshList()
+        }
+      } catch (error) {
+        MessagePlugin.error('删除失败')
+      }
+    },
+    onClose: () => {
+      confirmDialog.destroy()
     }
-  } catch (error) {
-    // 用户取消
-  }
+  })
 }
 
 // 重置表单
