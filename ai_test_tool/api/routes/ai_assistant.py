@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
 from ...services import AIAssistantService
-from ...database import get_db_manager, DatabaseManager
 from ...database.repository import AIInsightRepository, TestCaseRepository, ChatSessionRepository, ChatMessageRepository
 from ...utils.logger import get_logger
 from ...exceptions import NotFoundError, LLMError

@@ -7,14 +7,16 @@ import json
 import uuid
 import hashlib
 import time
-from typing import Any, Optional
+from typing import Any
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends
 
 from ....services import EndpointTestGeneratorService
-from ....database import get_db_manager, DatabaseManager
+from ....database import DatabaseManager
+from ....database.repository import TaskRepository
+from ....database.models.base import TaskStatus
 from ....utils.logger import get_logger
 from ....utils.sql_security import build_safe_like
-from ...dependencies import get_database
+from ...dependencies import get_database, get_task_repository
 from .schemas import GenerateTestsRequest, UpdateTestCaseRequest
 
 router = APIRouter()
@@ -23,15 +25,11 @@ logger = get_logger()
 
 def _run_generate_task(task_id: str, request_data: dict):
     """后台执行测试用例生成任务"""
-    db = get_db_manager()
+    task_repo = TaskRepository()
 
     try:
         # 更新任务状态为运行中
-        db.execute("""
-            UPDATE analysis_tasks
-            SET status = 'running', started_at = datetime('now')
-            WHERE task_id = %s
-        """, (task_id,))
+        task_repo.update_status(task_id, TaskStatus.RUNNING)
 
         service = EndpointTestGeneratorService(verbose=True)
         endpoint_ids = request_data.get('endpoint_ids')
@@ -48,15 +46,12 @@ def _run_generate_task(task_id: str, request_data: dict):
                 use_ai=use_ai,
                 save_to_db=True
             )
-            db.execute("""
-                UPDATE analysis_tasks
-                SET status = 'completed',
-                    total_requests = 1,
-                    processed_lines = 1,
-                    total_test_cases = %s,
-                    completed_at = datetime('now')
-                WHERE task_id = %s
-            """, (len(test_cases), task_id))
+            task_repo.update_counts(
+                task_id,
+                total_requests=1,
+                total_test_cases=len(test_cases)
+            )
+            task_repo.update_status(task_id, TaskStatus.COMPLETED)
         else:
             # 批量生成
             result = service.generate_for_all_endpoints(
@@ -73,32 +68,21 @@ def _run_generate_task(task_id: str, request_data: dict):
                 'failed_count': result['failed_count'],
                 'errors': result.get('errors', [])
             }
-            db.execute("""
-                UPDATE analysis_tasks
-                SET status = 'completed',
-                    total_requests = %s,
-                    processed_lines = %s,
-                    total_test_cases = %s,
-                    metadata = %s,
-                    completed_at = datetime('now')
-                WHERE task_id = %s
-            """, (
-                result['total_endpoints'],
-                result['total_endpoints'],
-                result['total_cases_generated'],
-                json.dumps(metadata, ensure_ascii=False),
-                task_id
-            ))
+            task_repo.update_counts(
+                task_id,
+                total_requests=result['total_endpoints'],
+                total_test_cases=result['total_cases_generated']
+            )
+            # Update metadata via direct db call since no dedicated method
+            task_repo.db.execute(
+                "UPDATE analysis_tasks SET metadata = %s WHERE task_id = %s",
+                (json.dumps(metadata, ensure_ascii=False), task_id)
+            )
+            task_repo.update_status(task_id, TaskStatus.COMPLETED)
 
     except Exception as e:
         logger.error(f"生成任务失败: {e}")
-        db.execute("""
-            UPDATE analysis_tasks
-            SET status = 'failed',
-                error_message = %s,
-                completed_at = datetime('now')
-            WHERE task_id = %s
-        """, (str(e), task_id))
+        task_repo.update_status(task_id, TaskStatus.FAILED, error_message=str(e))
 
 
 @router.post("/tests/generate")
@@ -177,7 +161,7 @@ async def get_generate_task_status(
     if result.get('metadata') and isinstance(result['metadata'], str):
         try:
             result['metadata'] = json.loads(result['metadata'])
-        except:
+        except (json.JSONDecodeError, ValueError):
             pass
 
     return result
@@ -222,7 +206,7 @@ async def list_generate_tasks(
         if item.get('metadata') and isinstance(item['metadata'], str):
             try:
                 item['metadata'] = json.loads(item['metadata'])
-            except:
+            except (json.JSONDecodeError, ValueError):
                 pass
         items.append(item)
 
@@ -469,7 +453,7 @@ async def update_test_case(
 @router.post("/tests/{test_case_id}/copy")
 async def copy_test_case(
     test_case_id: str,
-    request: Optional[UpdateTestCaseRequest] = None,
+    request: UpdateTestCaseRequest | None = None,
     db: DatabaseManager = Depends(get_database)
 ):
     """复制测试用例"""

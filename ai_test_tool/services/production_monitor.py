@@ -9,27 +9,13 @@ import re
 from typing import Any
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 
 from ..database import get_db_manager
 from ..llm.chains import ResultValidatorChain
 from ..llm.provider import get_llm_provider
 from ..utils.logger import get_logger
-
-
-class RequestSource(Enum):
-    """请求来源"""
-    LOG_PARSE = "log_parse"      # 日志解析
-    MANUAL = "manual"            # 手动添加
-    IMPORT = "import"            # 导入
-
-
-class HealthStatus(Enum):
-    """健康状态"""
-    HEALTHY = "healthy"          # 健康
-    DEGRADED = "degraded"        # 降级
-    UNHEALTHY = "unhealthy"      # 不健康
-    UNKNOWN = "unknown"          # 未知
+from ..health.models import HealthStatus
+from ..database.models.monitoring import RequestSource
 
 
 @dataclass
@@ -634,7 +620,8 @@ class ProductionMonitorService:
             self.logger.error(
                 f"接口连续失败 {consecutive} 次: {req['method']} {req['url']}"
             )
-            # TODO: 可以在这里添加告警通知逻辑
+            # 创建告警洞察
+            self._create_alert_insight(req, result, consecutive)
     
     def _save_check_result(self, execution_id: str, result: HealthCheckResult) -> None:
         """保存检查结果"""
@@ -666,3 +653,66 @@ class ProductionMonitorService:
             "ai_analysis": result.ai_analysis,
             "checked_at": result.checked_at.isoformat() if result.checked_at else None
         }
+
+    def _create_alert_insight(
+        self,
+        req: dict[str, Any],
+        result: HealthCheckResult,
+        consecutive_failures: int
+    ) -> None:
+        """创建告警洞察"""
+        import uuid
+
+        # 生成唯一的告警ID（基于请求ID和时间）
+        alert_id = f"alert_{uuid.uuid4().hex[:12]}"
+
+        # 构建告警详情
+        details = {
+            "request_id": req.get("request_id"),
+            "method": req.get("method"),
+            "url": req.get("url"),
+            "consecutive_failures": consecutive_failures,
+            "last_error": result.error_message,
+            "last_status_code": result.status_code,
+            "last_check_at": result.checked_at.isoformat() if result.checked_at else None
+        }
+
+        # 构建建议
+        recommendations = [
+            f"检查接口 {req.get('method')} {req.get('url')} 的服务状态",
+            "查看服务日志排查错误原因",
+            "确认网络连接和依赖服务状态"
+        ]
+
+        if result.status_code and result.status_code >= 500:
+            recommendations.insert(0, "服务端错误，优先检查服务器状态和日志")
+        elif result.status_code and result.status_code >= 400:
+            recommendations.insert(0, "客户端错误，检查请求参数和认证状态")
+
+        # 插入告警到 ai_insights 表
+        sql = """
+            INSERT INTO ai_insights
+            (insight_id, insight_type, title, description, severity, confidence,
+             details, recommendations, is_resolved, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, datetime('now'))
+        """
+
+        severity = 'high' if consecutive_failures >= 5 else 'medium'
+        title = f"接口连续失败告警: {req.get('method')} {req.get('url', '')[:50]}"
+        description = f"接口已连续失败 {consecutive_failures} 次，最后错误: {result.error_message or '未知错误'}"
+
+        try:
+            self.db.execute(sql, (
+                alert_id,
+                'consecutive_failure',  # 告警类型
+                title,
+                description,
+                severity,
+                0.95,  # 高置信度
+                json.dumps(details, ensure_ascii=False),
+                json.dumps(recommendations, ensure_ascii=False),
+                False  # 未解决
+            ))
+            self.logger.info(f"已创建告警洞察: {alert_id}")
+        except Exception as e:
+            self.logger.error(f"创建告警洞察失败: {e}")

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from .base import BaseModel, StepType, ScenarioStatus, TriggerType, TestResultStatus
+from .base import BaseModel, ScenarioStepType, ScenarioStatus, TriggerType, TestResultStatus
 
 
 @dataclass
@@ -48,7 +48,7 @@ class ScenarioStep(BaseModel):
     step_order: int
     name: str
     description: str = ""
-    step_type: StepType = StepType.REQUEST
+    step_type: ScenarioStepType = ScenarioStepType.REQUEST
     method: str = ""
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
@@ -68,7 +68,7 @@ class ScenarioStep(BaseModel):
 
     @classmethod
     def _get_enum_fields_class(cls) -> dict[str, Type[Enum]]:
-        return {'step_type': StepType}
+        return {'step_type': ScenarioStepType}
 
     @classmethod
     def _get_json_fields_class(cls) -> list[str]:

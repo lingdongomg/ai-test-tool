@@ -6,7 +6,7 @@ ChainBuilder - 流式推理链构建器
 
 from typing import Any, Callable
 
-from .models import ThinkingStep, ChainConfig, StepType
+from .models import ThinkingStep, ChainConfig, ReasoningStepType
 from .engine import ChainOfThoughtEngine
 from ..llm.provider import LLMProvider
 
@@ -67,7 +67,7 @@ class ChainBuilder:
         name: str,
         prompt: str,
         description: str = "",
-        step_type: StepType = StepType.ANALYSIS,
+        step_type: ReasoningStepType = ReasoningStepType.ANALYSIS,
         depends_on: list[str] | None = None,
         input_keys: list[str] | None = None,
         output_key: str = "",
@@ -132,7 +132,7 @@ class ChainBuilder:
             step_id=step_id,
             name=name,
             prompt=prompt,
-            step_type=StepType.ANALYSIS,
+            step_type=ReasoningStepType.ANALYSIS,
             **kwargs
         )
 
@@ -148,7 +148,7 @@ class ChainBuilder:
             step_id=step_id,
             name=name,
             prompt=prompt,
-            step_type=StepType.EXTRACTION,
+            step_type=ReasoningStepType.EXTRACTION,
             **kwargs
         )
 
@@ -164,7 +164,7 @@ class ChainBuilder:
             step_id=step_id,
             name=name,
             prompt=prompt,
-            step_type=StepType.INFERENCE,
+            step_type=ReasoningStepType.INFERENCE,
             **kwargs
         )
 
@@ -180,7 +180,7 @@ class ChainBuilder:
             step_id=step_id,
             name=name,
             prompt=prompt,
-            step_type=StepType.SYNTHESIS,
+            step_type=ReasoningStepType.SYNTHESIS,
             **kwargs
         )
 
@@ -196,7 +196,7 @@ class ChainBuilder:
             step_id=step_id,
             name=name,
             prompt=prompt,
-            step_type=StepType.VALIDATION,
+            step_type=ReasoningStepType.VALIDATION,
             **kwargs
         )
 
@@ -212,7 +212,7 @@ class ChainBuilder:
             step_id=step_id,
             name=name,
             prompt=prompt,
-            step_type=StepType.ACTION,
+            step_type=ReasoningStepType.ACTION,
             **kwargs
         )
 

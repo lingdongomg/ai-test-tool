@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Depends
 from pydantic import BaseModel
 
-from ...database import get_db_manager, DatabaseManager
+from ...database import DatabaseManager
 from ...utils.logger import get_logger
 from ..dependencies import get_database
 

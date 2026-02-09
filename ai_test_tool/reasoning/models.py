@@ -29,8 +29,8 @@ class ChainStatus(str, Enum):
     ABORTED = "aborted"         # 中止
 
 
-class StepType(str, Enum):
-    """步骤类型"""
+class ReasoningStepType(str, Enum):
+    """推理步骤类型"""
     ANALYSIS = "analysis"       # 分析步骤
     EXTRACTION = "extraction"   # 信息提取
     INFERENCE = "inference"     # 推理判断
@@ -50,7 +50,7 @@ class ThinkingStep:
     name: str                               # 步骤名称
     description: str                        # 步骤描述
     prompt_template: str                    # Prompt模板（支持变量替换）
-    step_type: StepType = StepType.ANALYSIS # 步骤类型
+    step_type: ReasoningStepType = ReasoningStepType.ANALYSIS # 步骤类型
     order: int = 0                          # 执行顺序
     depends_on: list[str] = field(default_factory=list)  # 依赖的前置步骤
     input_keys: list[str] = field(default_factory=list)  # 需要的输入键

@@ -10,12 +10,12 @@ import json
 import uuid
 
 from ...services import ProductionMonitorService, AIAssistantService
-from ...database import get_db_manager, DatabaseManager
 from ...database.repository import (
     ProductionRequestRepository,
     HealthCheckExecutionRepository,
     HealthCheckResultRepository,
     AIInsightRepository,
+    SystemConfigRepository,
 )
 from ...database.models import ProductionRequest
 from ...utils.logger import get_logger
@@ -28,10 +28,14 @@ from ..dependencies import (
     get_health_check_execution_repository,
     get_health_check_result_repository,
     get_ai_insight_repository,
+    get_system_config_repository,
 )
 
 router = APIRouter()
 logger = get_logger()
+
+# 配置键常量
+SCHEDULE_CONFIG_KEY = "health_check_schedule"
 
 
 # ==================== 请求/响应模型 ====================
@@ -360,10 +364,11 @@ async def get_monitoring_statistics(
 # ==================== 定时任务配置 ====================
 
 @router.get("/schedule")
-async def get_schedule_config():
+async def get_schedule_config(
+    config_repo: SystemConfigRepository = Depends(get_system_config_repository)
+):
     """获取定时巡检配置"""
-    # 暂时返回默认配置，后续可扩展为数据库存储
-    return {
+    default_config = {
         "enabled": False,
         "cron": "0 */1 * * *",
         "base_url": "",
@@ -373,16 +378,32 @@ async def get_schedule_config():
         "last_run": None,
         "next_run": None
     }
+    saved_config = config_repo.get(SCHEDULE_CONFIG_KEY, default_config)
+    # 合并默认配置（确保新字段有值）
+    return {**default_config, **saved_config}
 
 
 @router.put("/schedule")
-async def update_schedule_config(config: ScheduleConfig):
+async def update_schedule_config(
+    config: ScheduleConfig,
+    config_repo: SystemConfigRepository = Depends(get_system_config_repository)
+):
     """更新定时巡检配置"""
-    # TODO: 保存到数据库并更新调度器
+    config_data = config.model_dump()
+
+    # 保存到数据库
+    config_repo.set(
+        SCHEDULE_CONFIG_KEY,
+        config_data,
+        description="健康检查定时任务配置"
+    )
+
+    logger.info(f"定时巡检配置已更新: enabled={config.enabled}, cron={config.cron}")
+
     return {
         "success": True,
         "message": "配置已更新",
-        "config": config.model_dump()
+        "config": config_data
     }
 
 

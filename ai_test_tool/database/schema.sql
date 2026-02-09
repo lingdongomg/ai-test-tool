@@ -477,3 +477,105 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);
+
+-- =====================================================
+-- 系统配置表
+-- =====================================================
+
+-- 系统配置表（键值存储）
+CREATE TABLE IF NOT EXISTS system_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_key TEXT NOT NULL UNIQUE,
+    config_value TEXT NOT NULL DEFAULT '{}',
+    description TEXT DEFAULT '',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_system_configs_key ON system_configs(config_key);
+
+-- =====================================================
+-- 线上监控表
+-- =====================================================
+
+-- 生产请求监控表
+CREATE TABLE IF NOT EXISTS production_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT NOT NULL UNIQUE,
+    method TEXT NOT NULL,
+    url TEXT NOT NULL,
+    headers TEXT,
+    body TEXT,
+    query_params TEXT,
+    expected_status_code INTEGER DEFAULT 200,
+    expected_response_pattern TEXT,
+    source TEXT DEFAULT 'manual' CHECK(source IN ('log_parse', 'manual', 'import')),
+    source_task_id TEXT,
+    tags TEXT,
+    is_enabled INTEGER DEFAULT 1,
+    last_check_at TEXT,
+    last_check_status TEXT,
+    consecutive_failures INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_production_requests_method ON production_requests(method);
+CREATE INDEX IF NOT EXISTS idx_production_requests_is_enabled ON production_requests(is_enabled);
+CREATE INDEX IF NOT EXISTS idx_production_requests_source ON production_requests(source);
+CREATE INDEX IF NOT EXISTS idx_production_requests_last_check_status ON production_requests(last_check_status);
+
+-- AI 洞察表
+CREATE TABLE IF NOT EXISTS ai_insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    insight_id TEXT NOT NULL UNIQUE,
+    insight_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    severity TEXT DEFAULT 'medium' CHECK(severity IN ('high', 'medium', 'low')),
+    confidence REAL DEFAULT 0.8,
+    details TEXT,
+    recommendations TEXT,
+    is_resolved INTEGER DEFAULT 0,
+    resolved_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ai_insights_insight_type ON ai_insights(insight_type);
+CREATE INDEX IF NOT EXISTS idx_ai_insights_severity ON ai_insights(severity);
+CREATE INDEX IF NOT EXISTS idx_ai_insights_is_resolved ON ai_insights(is_resolved);
+CREATE INDEX IF NOT EXISTS idx_ai_insights_created_at ON ai_insights(created_at);
+
+-- 健康检查执行表
+CREATE TABLE IF NOT EXISTS health_check_executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id TEXT NOT NULL UNIQUE,
+    base_url TEXT,
+    total_requests INTEGER DEFAULT 0,
+    healthy_count INTEGER DEFAULT 0,
+    unhealthy_count INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed')),
+    trigger_type TEXT DEFAULT 'manual' CHECK(trigger_type IN ('manual', 'scheduled', 'api')),
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_health_check_executions_status ON health_check_executions(status);
+CREATE INDEX IF NOT EXISTS idx_health_check_executions_trigger_type ON health_check_executions(trigger_type);
+CREATE INDEX IF NOT EXISTS idx_health_check_executions_created_at ON health_check_executions(created_at);
+
+-- 健康检查结果表
+CREATE TABLE IF NOT EXISTS health_check_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    execution_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    success INTEGER DEFAULT 0,
+    status_code INTEGER,
+    response_time_ms REAL,
+    response_body TEXT,
+    error_message TEXT,
+    ai_analysis TEXT,
+    checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (execution_id) REFERENCES health_check_executions(execution_id) ON DELETE CASCADE,
+    FOREIGN KEY (request_id) REFERENCES production_requests(request_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_health_check_results_execution_id ON health_check_results(execution_id);
+CREATE INDEX IF NOT EXISTS idx_health_check_results_request_id ON health_check_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_health_check_results_success ON health_check_results(success);
+CREATE INDEX IF NOT EXISTS idx_health_check_results_checked_at ON health_check_results(checked_at);

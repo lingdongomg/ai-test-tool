@@ -317,6 +317,8 @@ const getSeverityLabel = (severity: string) => {
 <style scoped>
 .ai-assistant-page {
   height: calc(100vh - 120px);
+  min-height: 600px;
+  padding: 0 16px 16px;
 }
 
 .chat-card {
@@ -325,14 +327,20 @@ const getSeverityLabel = (severity: string) => {
   flex-direction: column;
 }
 
+.chat-card :deep(.t-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
   background: #f5f7fa;
   border-radius: 8px;
-  min-height: 400px;
-  max-height: 500px;
+  min-height: 300px;
 }
 
 .message {
@@ -516,5 +524,85 @@ const getSeverityLabel = (severity: string) => {
 .rec-desc {
   font-size: 13px;
   color: rgba(0, 0, 0, 0.6);
+}
+
+/* 响应式设计 - 移动端适配 */
+@media (max-width: 991px) {
+  .ai-assistant-page {
+    height: auto;
+    min-height: auto;
+  }
+
+  .chat-card {
+    height: auto;
+    min-height: 500px;
+    margin-bottom: 16px;
+  }
+
+  .chat-messages {
+    min-height: 350px;
+    max-height: 400px;
+  }
+
+  .message-content {
+    max-width: 85%;
+  }
+}
+
+@media (max-width: 576px) {
+  .ai-assistant-page {
+    padding: 0 8px 16px;
+  }
+
+  .chat-messages {
+    padding: 12px;
+    min-height: 280px;
+    max-height: 350px;
+  }
+
+  .message {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .message-avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .message-content {
+    max-width: 90%;
+  }
+
+  .message-text {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+
+  .chat-input {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .chat-input .t-button {
+    width: 100%;
+  }
+
+  .function-item {
+    padding: 10px;
+  }
+
+  .function-icon {
+    font-size: 20px;
+  }
+
+  .insight-item {
+    flex-wrap: wrap;
+  }
+
+  .insight-title {
+    flex: 1 1 100%;
+    margin-top: 4px;
+  }
 }
 </style>

@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
-from ....database import get_db_manager, DatabaseManager
+from ....database import DatabaseManager
 from ....utils.logger import get_logger
 from ...dependencies import get_database
 from .schemas import ExecuteTestsRequest
@@ -31,7 +31,8 @@ async def execute_tests(
     - 按标签执行
     """
     from ....testing import TestExecutor, TestCase
-    from ....testing.test_case_generator import TestCaseCategory, TestCasePriority, ExpectedResult
+    from ....testing.test_case_generator import ExpectedResult
+    from ....database.models.base import TestCaseCategory, TestCasePriority
     from ....config import TestConfig
 
     # 构建查询条件

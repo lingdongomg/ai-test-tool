@@ -10,8 +10,8 @@ import json
 import re
 from typing import Any
 from dataclasses import dataclass, field, asdict
-from enum import Enum
 
+from ..database.models.base import TestCaseCategory, TestCasePriority
 from ..parser.log_parser import ParsedRequest
 from ..llm.chains import TestCaseGeneratorChain, KnowledgeEnhancedTestGeneratorChain
 from ..utils.logger import get_logger
@@ -22,22 +22,6 @@ try:
     KNOWLEDGE_ENABLED = True
 except ImportError:
     KNOWLEDGE_ENABLED = False
-
-
-class TestCaseCategory(Enum):
-    """测试用例类别"""
-    NORMAL = "normal"           # 正常场景
-    BOUNDARY = "boundary"       # 边界值
-    EXCEPTION = "exception"     # 异常场景
-    PERFORMANCE = "performance" # 性能测试
-    SECURITY = "security"       # 安全测试
-
-
-class TestCasePriority(Enum):
-    """测试用例优先级"""
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
 
 
 @dataclass

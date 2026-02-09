@@ -13,9 +13,10 @@ import os
 import uuid
 
 from ...services import LogAnomalyDetectorService, AIAssistantService
-from ...database import get_db_manager, DatabaseManager
-from ...database.repository import RequestRepository
-from ...database.models import ParsedRequestRecord
+from ...database import DatabaseManager
+from ...database.repository import TaskRepository, RequestRepository, ReportRepository
+from ...database.models import ParsedRequestRecord, AnalysisTask
+from ...database.models.base import TaskStatus
 from ...parser.log_parser import LogParser
 from ...llm.chains import LogAnalysisChain
 from ...llm.provider import get_llm_provider
@@ -24,7 +25,9 @@ from ...config.settings import get_config
 from ..dependencies import (
     get_database,
     get_request_repository,
-    get_log_anomaly_detector_service
+    get_log_anomaly_detector_service,
+    get_task_repository,
+    get_report_repository,
 )
 
 router = APIRouter()
@@ -79,7 +82,7 @@ async def upload_log_file(
     include_ai_analysis: bool = Form(default=True),
     max_lines: int | None = Form(default=None, description="最大处理行数"),
     background_tasks: BackgroundTasks = None,
-    db: DatabaseManager = Depends(get_database)
+    task_repo: TaskRepository = Depends(get_task_repository),
 ):
     """
     上传日志文件进行分析
@@ -120,11 +123,13 @@ async def upload_log_file(
 
         # 创建分析任务
         task_name = f"日志分析-{file.filename}" if analysis_type == "anomaly" else f"请求提取-{file.filename}"
-        db.execute("""
-            INSERT INTO analysis_tasks
-            (task_id, name, log_file_path, log_file_size, status)
-            VALUES (%s, %s, %s, %s, 'pending')
-        """, (task_id, task_name, file_path, len(content)))
+        task = AnalysisTask(
+            task_id=task_id,
+            name=task_name,
+            log_file_path=file_path,
+            log_file_size=len(content),
+        )
+        task_repo.create(task)
 
         # 后台执行分析
         if background_tasks:
@@ -163,21 +168,18 @@ async def upload_log_file(
 async def analyze_log(
     request: AnalyzeLogRequest,
     background_tasks: BackgroundTasks,
-    db: DatabaseManager = Depends(get_database)
+    task_repo: TaskRepository = Depends(get_task_repository),
 ):
     """
     分析日志（支持已有任务或直接粘贴内容）
     """
     if request.task_id:
         # 分析已有任务
-        task = db.fetch_one(
-            "SELECT * FROM analysis_tasks WHERE task_id = %s",
-            (request.task_id,)
-        )
+        task = task_repo.get_by_id(request.task_id)
         if not task:
             raise HTTPException(status_code=404, detail="任务不存在")
 
-        file_path = task['log_file_path']
+        file_path = task.log_file_path
 
     elif request.log_content:
         # 直接分析粘贴的内容
@@ -190,11 +192,13 @@ async def analyze_log(
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(request.log_content)
 
-        db.execute("""
-            INSERT INTO analysis_tasks
-            (task_id, name, log_file_path, log_file_size, status)
-            VALUES (%s, %s, %s, %s, 'pending')
-        """, (task_id, "日志分析-粘贴内容", file_path, len(request.log_content)))
+        task = AnalysisTask(
+            task_id=task_id,
+            name="日志分析-粘贴内容",
+            log_file_path=file_path,
+            log_file_size=len(request.log_content),
+        )
+        task_repo.create(task)
 
         request.task_id = task_id
 
@@ -218,22 +222,19 @@ async def analyze_log(
 
 
 def _analyze_log_task_sync(
-    task_id: str, 
-    file_path: str, 
+    task_id: str,
+    file_path: str,
     detect_types: list[str] | None,
     include_ai_analysis: bool
 ):
     """后台分析任务 - 同步版本，在线程池中执行"""
     import traceback
-    db = get_db_manager()
-    
+    task_repo = TaskRepository()
+
     try:
         # 更新状态为运行中
-        db.execute(
-            "UPDATE analysis_tasks SET status = 'running', started_at = datetime('now') WHERE task_id = %s",
-            (task_id,)
-        )
-        
+        task_repo.update_status(task_id, TaskStatus.RUNNING)
+
         service = LogAnomalyDetectorService(verbose=True)
         report = service.detect_anomalies_from_file(
             file_path=file_path,
@@ -241,23 +242,15 @@ def _analyze_log_task_sync(
             detect_types=detect_types,
             include_ai_analysis=include_ai_analysis
         )
-        
+
         # 更新状态为完成
-        db.execute("""
-            UPDATE analysis_tasks 
-            SET status = 'completed', completed_at = datetime('now')
-            WHERE task_id = %s
-        """, (task_id,))
-        
+        task_repo.update_status(task_id, TaskStatus.COMPLETED)
+
     except Exception as e:
         # 记录详细错误信息，包含堆栈追踪
         error_detail = f"{type(e).__name__}: {str(e)}\n\n堆栈追踪:\n{traceback.format_exc()}"
         logger.error(f"分析任务失败 [{task_id}]: {error_detail}")
-        db.execute("""
-            UPDATE analysis_tasks 
-            SET status = 'failed', error_message = %s, completed_at = datetime('now')
-            WHERE task_id = %s
-        """, (error_detail, task_id))
+        task_repo.update_status(task_id, TaskStatus.FAILED, error_message=error_detail)
 
 
 async def _analyze_log_task(
@@ -285,16 +278,13 @@ def _parse_requests_task_sync(
 ):
     """后台解析请求任务 - 同步版本，在线程池中执行"""
     import traceback as tb
-    db = get_db_manager()
+    task_repo = TaskRepository()
     task_logger = get_logger(verbose=True)
-    
+
     try:
         # 更新状态为运行中
-        db.execute(
-            "UPDATE analysis_tasks SET status = 'running', started_at = datetime('now') WHERE task_id = %s",
-            (task_id,)
-        )
-        
+        task_repo.update_status(task_id, TaskStatus.RUNNING)
+
         # 初始化解析器
         try:
             provider = get_llm_provider()
@@ -302,22 +292,24 @@ def _parse_requests_task_sync(
         except Exception as e:
             task_logger.warn(f"无法初始化AI，使用基础解析: {e}")
             llm_chain = None
-        
+
         parser = LogParser(llm_chain=llm_chain, verbose=True)
         request_repo = RequestRepository()
-        
+
         total_requests = 0
         total_lines = 0
-        
+
         # 计算总行数
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             total_lines = sum(1 for _ in f)
-        
-        db.execute(
+
+        task_repo.update_progress(task_id, processed_lines=0, total_requests=0)
+        # Also update total_lines via direct update since no dedicated method exists
+        task_repo.db.execute(
             "UPDATE analysis_tasks SET total_lines = %s WHERE task_id = %s",
             (total_lines, task_id)
         )
-        
+
         # 解析日志文件
         for batch_requests in parser.parse_file(file_path, max_lines=max_lines):
             # 转换为数据库记录
@@ -345,38 +337,26 @@ def _parse_requests_task_sync(
                     metadata=req.metadata or {}
                 )
                 records.append(record)
-            
+
             # 批量保存
             if records:
                 request_repo.create_batch(records)
                 total_requests += len(records)
-                
+
                 # 更新进度
-                db.execute(
-                    "UPDATE analysis_tasks SET total_requests = %s WHERE task_id = %s",
-                    (total_requests, task_id)
-                )
-        
+                task_repo.update_counts(task_id, total_requests=total_requests)
+
         # 更新状态为完成
-        db.execute("""
-            UPDATE analysis_tasks 
-            SET status = 'completed', 
-                total_requests = %s,
-                completed_at = datetime('now')
-            WHERE task_id = %s
-        """, (total_requests, task_id))
-        
+        task_repo.update_counts(task_id, total_requests=total_requests)
+        task_repo.update_status(task_id, TaskStatus.COMPLETED)
+
         task_logger.info(f"请求解析完成: 共提取 {total_requests} 个请求")
-        
+
     except Exception as e:
         # 记录详细错误信息，包含堆栈追踪
         error_detail = f"{type(e).__name__}: {str(e)}\n\n堆栈追踪:\n{tb.format_exc()}"
         logger.error(f"请求解析任务失败 [{task_id}]: {error_detail}")
-        db.execute("""
-            UPDATE analysis_tasks 
-            SET status = 'failed', error_message = %s, completed_at = datetime('now')
-            WHERE task_id = %s
-        """, (error_detail, task_id))
+        task_repo.update_status(task_id, TaskStatus.FAILED, error_message=error_detail)
 
 
 async def _parse_requests_task(
@@ -439,64 +419,55 @@ async def list_analysis_tasks(
 @router.get("/tasks/{task_id}")
 async def get_analysis_task(
     task_id: str,
-    db: DatabaseManager = Depends(get_database)
+    task_repo: TaskRepository = Depends(get_task_repository),
+    report_repo: ReportRepository = Depends(get_report_repository),
 ):
     """获取分析任务详情"""
-    task = db.fetch_one(
-        "SELECT * FROM analysis_tasks WHERE task_id = %s",
-        (task_id,)
-    )
+    task = task_repo.get_by_id(task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 获取关联的报告
-    reports = db.fetch_all(
-        "SELECT * FROM analysis_reports WHERE task_id = %s ORDER BY created_at DESC",
-        (task_id,)
-    )
+    reports = report_repo.get_by_task(task_id)
 
     return {
-        "task": dict(task),
-        "reports": [dict(r) for r in reports]
+        "task": task.to_dict(),
+        "reports": [r.to_dict() for r in reports]
     }
 
 
 @router.delete("/tasks/{task_id}")
 async def delete_analysis_task(
     task_id: str,
-    db: DatabaseManager = Depends(get_database)
+    task_repo: TaskRepository = Depends(get_task_repository),
+    report_repo: ReportRepository = Depends(get_report_repository),
+    request_repo: RequestRepository = Depends(get_request_repository),
 ):
     """删除分析任务"""
     # 检查任务是否存在
-    task = db.fetch_one(
-        "SELECT * FROM analysis_tasks WHERE task_id = %s",
-        (task_id,)
-    )
+    task = task_repo.get_by_id(task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 删除关联的报告
-    db.execute("DELETE FROM analysis_reports WHERE task_id = %s", (task_id,))
+    report_repo.delete_by_field("task_id", task_id)
 
     # 删除关联的解析请求
-    db.execute("DELETE FROM parsed_requests WHERE task_id = %s", (task_id,))
+    request_repo.delete_by_field("task_id", task_id)
 
     # 删除任务
-    db.execute("DELETE FROM analysis_tasks WHERE task_id = %s", (task_id,))
+    task_repo.delete(task_id)
 
     # 删除上传的文件
-    if task.get('log_file_path'):
-        import os
+    if task.log_file_path:
         try:
-            if os.path.exists(task['log_file_path']):
-                os.remove(task['log_file_path'])
+            if os.path.exists(task.log_file_path):
+                os.remove(task.log_file_path)
         except Exception as e:
             logger.warn(f"删除文件失败: {e}")
 
-    return {"success": True, "message": "删除成功"}
-    
     return {"success": True, "message": "删除成功"}
 
 

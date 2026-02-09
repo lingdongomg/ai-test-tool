@@ -43,6 +43,9 @@ ALLOWED_TABLES: frozenset[str] = frozenset({
     "production_requests",
     "health_check_executions",
     "health_check_results",
+    "chat_sessions",
+    "chat_messages",
+    "system_configs",
 })
 
 # 每个表允许的字段（用于 UPDATE/INSERT 操作的字段白名单）
@@ -166,6 +169,18 @@ TABLE_FIELDS: dict[str, frozenset[str]] = {
         "id", "execution_id", "request_id", "success", "status_code",
         "response_time_ms", "response_body", "error_message", "ai_analysis",
         "checked_at"
+    }),
+    # 会话与系统配置表
+    "chat_sessions": frozenset({
+        "id", "session_id", "title", "context", "message_count",
+        "created_at", "updated_at"
+    }),
+    "chat_messages": frozenset({
+        "id", "message_id", "session_id", "role", "content",
+        "metadata", "created_at"
+    }),
+    "system_configs": frozenset({
+        "id", "config_key", "config_value", "description", "updated_at"
     }),
 }
 

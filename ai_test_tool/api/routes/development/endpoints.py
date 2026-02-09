@@ -6,7 +6,7 @@
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
-from ....database import get_db_manager, DatabaseManager
+from ....database import DatabaseManager
 from ....utils.logger import get_logger
 from ....utils.sql_security import build_safe_like
 from ...dependencies import get_database

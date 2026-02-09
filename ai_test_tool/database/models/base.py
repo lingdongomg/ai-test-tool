@@ -101,8 +101,8 @@ class EndpointSourceType(Enum):
     MANUAL = "manual"
 
 
-class StepType(Enum):
-    """步骤类型"""
+class ScenarioStepType(Enum):
+    """场景步骤类型"""
     REQUEST = "request"
     WAIT = "wait"
     CONDITION = "condition"

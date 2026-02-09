@@ -8,7 +8,6 @@ FastAPI 依赖注入模块
 """
 
 from functools import lru_cache
-from typing import Generator
 
 from fastapi import Depends
 
@@ -38,6 +37,7 @@ from ..database.repository import (
     HealthCheckResultRepository,
     ChatSessionRepository,
     ChatMessageRepository,
+    SystemConfigRepository,
 )
 
 
@@ -199,6 +199,12 @@ def get_chat_session_repository() -> ChatSessionRepository:
 def get_chat_message_repository() -> ChatMessageRepository:
     """获取对话消息仓库（单例）"""
     return ChatMessageRepository()
+
+
+@lru_cache()
+def get_system_config_repository() -> SystemConfigRepository:
+    """获取系统配置仓库（单例）"""
+    return SystemConfigRepository()
 
 
 # =====================================================

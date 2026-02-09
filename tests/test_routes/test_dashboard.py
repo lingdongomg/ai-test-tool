@@ -71,21 +71,28 @@ class TestDashboardRoutes:
 
     def test_coverage_rate_calculation(self, mock_db):
         """测试覆盖率计算"""
-        mock_db.fetch_one.return_value = {
-            'endpoint_total': 10,
-            'endpoint_methods': 4,
-            'total_cases': 50,
-            'enabled_cases': 45,
-            'covered_endpoints': 5,
-            'total_monitors': 0,
-            'enabled_monitors': 0,
-            'healthy_monitors': 0,
-            'unhealthy_monitors': 0,
-            'critical_monitors': 0,
-            'total_insights': 0,
-            'unresolved_insights': 0,
-            'high_priority_insights': 0
-        }
+        mock_db.fetch_one.side_effect = [
+            {
+                'endpoint_total': 10,
+                'endpoint_methods': 4,
+                'total_cases': 50,
+                'enabled_cases': 45,
+                'covered_endpoints': 5,
+                'total_monitors': 0,
+                'enabled_monitors': 0,
+                'healthy_monitors': 0,
+                'unhealthy_monitors': 0,
+                'critical_monitors': 0,
+                'total_insights': 0,
+                'unresolved_insights': 0,
+                'high_priority_insights': 0
+            },
+            {
+                'total_reports': 0,
+                'total_anomalies': 0,
+                'critical_count': 0
+            }
+        ]
 
         with patch('ai_test_tool.api.routes.dashboard.get_database', return_value=mock_db):
             from ai_test_tool.api.routes.dashboard import get_dashboard_stats
@@ -98,21 +105,28 @@ class TestDashboardRoutes:
 
     def test_zero_endpoints_no_division_error(self, mock_db):
         """测试零接口时不会除零错误"""
-        mock_db.fetch_one.return_value = {
-            'endpoint_total': 0,
-            'endpoint_methods': 0,
-            'total_cases': 0,
-            'enabled_cases': 0,
-            'covered_endpoints': 0,
-            'total_monitors': 0,
-            'enabled_monitors': 0,
-            'healthy_monitors': 0,
-            'unhealthy_monitors': 0,
-            'critical_monitors': 0,
-            'total_insights': 0,
-            'unresolved_insights': 0,
-            'high_priority_insights': 0
-        }
+        mock_db.fetch_one.side_effect = [
+            {
+                'endpoint_total': 0,
+                'endpoint_methods': 0,
+                'total_cases': 0,
+                'enabled_cases': 0,
+                'covered_endpoints': 0,
+                'total_monitors': 0,
+                'enabled_monitors': 0,
+                'healthy_monitors': 0,
+                'unhealthy_monitors': 0,
+                'critical_monitors': 0,
+                'total_insights': 0,
+                'unresolved_insights': 0,
+                'high_priority_insights': 0
+            },
+            {
+                'total_reports': 0,
+                'total_anomalies': 0,
+                'critical_count': 0
+            }
+        ]
 
         with patch('ai_test_tool.api.routes.dashboard.get_database', return_value=mock_db):
             from ai_test_tool.api.routes.dashboard import get_dashboard_stats

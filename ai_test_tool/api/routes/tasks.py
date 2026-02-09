@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 from ...core import AITestTool
 from ...config import AppConfig, LLMConfig, TestConfig
 from ...database import (
-    get_db_manager,
     TaskRepository,
     RequestRepository,
     TestCaseRepository,
@@ -110,27 +109,27 @@ def is_task_cancelled(task_id: str) -> bool:
 
 def _get_task_repo() -> TaskRepository:
     """获取任务仓库"""
-    return TaskRepository(get_db_manager())
+    return TaskRepository()
 
 
 def _get_request_repo() -> RequestRepository:
     """获取请求仓库"""
-    return RequestRepository(get_db_manager())
+    return RequestRepository()
 
 
 def _get_test_case_repo() -> TestCaseRepository:
     """获取测试用例仓库"""
-    return TestCaseRepository(get_db_manager())
+    return TestCaseRepository()
 
 
 def _get_test_result_repo() -> TestResultRepository:
     """获取测试结果仓库"""
-    return TestResultRepository(get_db_manager())
+    return TestResultRepository()
 
 
 def _get_report_repo() -> ReportRepository:
     """获取报告仓库"""
-    return ReportRepository(get_db_manager())
+    return ReportRepository()
 
 
 # ==================== API 端点 ====================
@@ -751,9 +750,9 @@ async def _run_tests_task(
     base_url: str,
     concurrent: int
 ) -> None:
-    """后台执行测试任务"""
-    # TODO: 实现从数据库加载测试用例并执行
-    pass
+    """后台执行测试任务（未实现，请使用 /development/tests/execute）"""
+    repo = _get_task_repo()
+    repo.update_status(task_id, TaskStatus.FAILED, error_message="此接口尚未实现，请使用 /api/v2/development/tests/execute")
 
 
 async def _execute_tests(
@@ -761,32 +760,28 @@ async def _execute_tests(
     base_url: str,
     concurrent: int
 ) -> dict[str, Any]:
-    """同步执行测试"""
-    # TODO: 实现从数据库加载测试用例并执行
-    return {
-        "task_id": task_id,
-        "status": "completed",
-        "test_results": 0
-    }
+    """同步执行测试（未实现，请使用 /development/tests/execute）"""
+    raise HTTPException(
+        status_code=501,
+        detail="此接口尚未实现，请使用 /api/v2/development/tests/execute"
+    )
 
 
 async def _generate_cases_task(
     task_id: str,
     test_strategy: str
 ) -> None:
-    """后台生成测试用例"""
-    # TODO: 实现从数据库加载请求并生成测试用例
-    pass
+    """后台生成测试用例（未实现，请使用 /development/tests/generate）"""
+    repo = _get_task_repo()
+    repo.update_status(task_id, TaskStatus.FAILED, error_message="此接口尚未实现，请使用 /api/v2/development/tests/generate")
 
 
 async def _execute_generate_cases(
     task_id: str,
     test_strategy: str
 ) -> dict[str, Any]:
-    """同步生成测试用例"""
-    # TODO: 实现从数据库加载请求并生成测试用例
-    return {
-        "task_id": task_id,
-        "status": "completed",
-        "test_cases": 0
-    }
+    """同步生成测试用例（未实现，请使用 /development/tests/generate）"""
+    raise HTTPException(
+        status_code=501,
+        detail="此接口尚未实现，请使用 /api/v2/development/tests/generate"
+    )

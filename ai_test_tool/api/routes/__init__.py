@@ -9,7 +9,7 @@ import json
 from typing import Any, Callable, TypeVar
 from functools import wraps
 
-from ...database import get_db_manager
+from ...database import DatabaseManager
 from ...utils.logger import get_logger
 from ...utils.sql_security import (
     validate_table_name,
@@ -26,6 +26,7 @@ T = TypeVar('T')
 
 
 def paginate(
+    db: DatabaseManager,
     table: str,
     conditions: list[str] | None = None,
     params: list[Any] | None = None,
@@ -39,6 +40,7 @@ def paginate(
     通用分页查询
 
     Args:
+        db: 数据库管理器（通过依赖注入获取）
         table: 表名
         conditions: WHERE条件列表（不含WHERE关键字）
         params: 查询参数
@@ -51,7 +53,6 @@ def paginate(
     Returns:
         包含 total, page, page_size, items 的字典
     """
-    db = get_db_manager()
     conditions = conditions or []
     params = params or []
 
@@ -99,6 +100,7 @@ def parse_json_fields(data: dict[str, Any], fields: list[str]) -> dict[str, Any]
 
 
 def update_task_status(
+    db: DatabaseManager,
     table: str,
     id_field: str,
     task_id: str,
@@ -106,7 +108,6 @@ def update_task_status(
     extra_fields: dict[str, Any] | None = None
 ) -> None:
     """更新任务状态"""
-    db = get_db_manager()
 
     # SQL 安全验证
     validate_table_name(table)

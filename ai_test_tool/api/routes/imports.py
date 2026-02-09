@@ -5,13 +5,15 @@
 
 import json
 from typing import Any, Literal
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from pydantic import BaseModel, Field
 
-from ...database import get_db_manager
+from ...database import DatabaseManager
+from ...database.repository import ApiEndpointRepository, ApiTagRepository
 from ...importer import DocImporter, ImportResult, UpdateStrategy, EndpointDiff
 from ...exceptions import FileUploadError
 from ...utils.file_validator import validate_upload_file, validate_upload_file_content, sanitize_filename
+from ..dependencies import get_database, get_api_endpoint_repository, get_api_tag_repository
 
 router = APIRouter()
 
@@ -84,7 +86,10 @@ async def import_file(
     file: UploadFile = File(..., description="接口文档文件"),
     doc_type: Literal["swagger", "postman", "auto"] = Form(default="auto"),
     save_to_db: bool = Form(default=True),
-    update_strategy: Literal["merge", "replace", "skip"] = Form(default="merge")
+    update_strategy: Literal["merge", "replace", "skip"] = Form(default="merge"),
+    db: DatabaseManager = Depends(get_database),
+    endpoint_repo: ApiEndpointRepository = Depends(get_api_endpoint_repository),
+    tag_repo: ApiTagRepository = Depends(get_api_tag_repository),
 ):
     """
     上传并导入接口文档文件
@@ -137,9 +142,9 @@ async def import_file(
     
     if save_to_db:
         strategy = UpdateStrategy(update_strategy)
-        counts = _save_import_result_with_strategy(result, safe_filename, strategy)
+        counts = _save_import_result_with_strategy(result, safe_filename, strategy, db, endpoint_repo, tag_repo)
         created_count, updated_count, skipped_count, deleted_count = counts
-    
+
     return ImportResponse(
         success=True,
         message=f"成功导入 {result.endpoint_count} 个接口，新增 {created_count}，更新 {updated_count}，跳过 {skipped_count}，删除 {deleted_count}",
@@ -155,7 +160,12 @@ async def import_file(
 
 
 @router.post("/json", response_model=ImportResponse)
-async def import_json(request: ImportRequest):
+async def import_json(
+    request: ImportRequest,
+    db: DatabaseManager = Depends(get_database),
+    endpoint_repo: ApiEndpointRepository = Depends(get_api_endpoint_repository),
+    tag_repo: ApiTagRepository = Depends(get_api_tag_repository),
+):
     """
     导入 JSON 数据
     
@@ -182,7 +192,7 @@ async def import_json(request: ImportRequest):
     
     if request.save_to_db:
         strategy = UpdateStrategy(request.update_strategy)
-        counts = _save_import_result_with_strategy(result, request.source_name, strategy)
+        counts = _save_import_result_with_strategy(result, request.source_name, strategy, db, endpoint_repo, tag_repo)
         created_count, updated_count, skipped_count, deleted_count = counts
     
     return ImportResponse(
@@ -250,7 +260,8 @@ async def preview_import(
 @router.post("/diff", response_model=DiffResponse)
 async def diff_import(
     file: UploadFile = File(..., description="接口文档文件"),
-    doc_type: Literal["swagger", "postman", "auto"] = Form(default="auto")
+    doc_type: Literal["swagger", "postman", "auto"] = Form(default="auto"),
+    db: DatabaseManager = Depends(get_database),
 ):
     """
     对比导入文件与现有数据的差异
@@ -286,7 +297,7 @@ async def diff_import(
         raise FileUploadError(result.message, file.filename)
     
     # 获取现有接口
-    existing_endpoints = _get_existing_endpoints()
+    existing_endpoints = _get_existing_endpoints(db)
     
     # 对比差异
     diffs = importer.compare_endpoints(result.endpoints, existing_endpoints)
@@ -351,13 +362,12 @@ async def get_supported_formats():
     }
 
 
-def _get_existing_endpoints() -> list:
+def _get_existing_endpoints(db: DatabaseManager) -> list:
     """获取数据库中的现有接口"""
     from ...database.models import ApiEndpoint, EndpointSourceType
-    
-    db = get_db_manager()
+
     rows = db.fetch_all("SELECT * FROM api_endpoints")
-    
+
     endpoints = []
     for row in rows:
         ep = ApiEndpoint(
@@ -383,15 +393,17 @@ def _get_existing_endpoints() -> list:
 def _save_import_result_with_strategy(
     result: ImportResult,
     source_file: str,
-    strategy: UpdateStrategy
+    strategy: UpdateStrategy,
+    db: DatabaseManager,
+    endpoint_repo: ApiEndpointRepository,
+    tag_repo: ApiTagRepository,
 ) -> tuple[int, int, int, int]:
     """
     使用指定策略保存导入结果
-    
+
     Returns:
         (created_count, updated_count, skipped_count, deleted_count)
     """
-    db = get_db_manager()
     importer = DocImporter()
     
     created_count = 0
@@ -411,7 +423,7 @@ def _save_import_result_with_strategy(
             )
     
     # 获取现有接口
-    existing_endpoints = _get_existing_endpoints()
+    existing_endpoints = _get_existing_endpoints(db)
     
     # 应用导入策略
     to_create, to_update, to_delete_ids = importer.apply_import(

@@ -36,8 +36,7 @@ class TestAIInsightRepository:
     @pytest.fixture
     def repo(self, mock_db):
         """创建测试用仓库"""
-        with patch('ai_test_tool.database.repository.get_db_manager', return_value=mock_db):
-            return AIInsightRepository(mock_db)
+        return AIInsightRepository(mock_db)
 
     def test_create_insight(self, repo, mock_db):
         """测试创建洞察"""
@@ -162,8 +161,7 @@ class TestProductionRequestRepository:
     @pytest.fixture
     def repo(self, mock_db):
         """创建测试用仓库"""
-        with patch('ai_test_tool.database.repository.get_db_manager', return_value=mock_db):
-            return ProductionRequestRepository(mock_db)
+        return ProductionRequestRepository(mock_db)
 
     def test_get_enabled(self, repo, mock_db):
         """测试获取启用的请求"""
@@ -246,39 +244,42 @@ class TestKnowledgeRepository:
     @pytest.fixture
     def repo(self, mock_db):
         """创建测试用仓库"""
-        with patch('ai_test_tool.database.repository.get_db_manager', return_value=mock_db):
-            return KnowledgeRepository(mock_db)
+        return KnowledgeRepository(mock_db)
 
     def test_search_paginated_with_keyword(self, repo, mock_db):
         """测试关键词搜索"""
         mock_db.fetch_one.return_value = {'count': 5}
-        mock_db.fetch_all.return_value = [
-            {
-                'id': 1,
-                'knowledge_id': 'kb_001',
-                'type': 'project_config',
-                'category': 'auth',
-                'title': '认证配置',
-                'content': 'Bearer Token认证',
-                'scope': '/api/*',
-                'priority': 10,
-                'status': 'active',
-                'source': 'manual',
-                'source_ref': '',
-                'metadata': '{}',
-                'created_by': '',
-                'version': 1,
-                'created_at': '2024-01-01 12:00:00',
-                'updated_at': None
-            }
+        # First fetch_all returns search results, subsequent calls return empty tags
+        mock_db.fetch_all.side_effect = [
+            [
+                {
+                    'id': 1,
+                    'knowledge_id': 'kb_001',
+                    'type': 'project_config',
+                    'category': 'auth',
+                    'title': '认证配置',
+                    'content': 'Bearer Token认证',
+                    'scope': '/api/*',
+                    'priority': 10,
+                    'status': 'active',
+                    'source': 'manual',
+                    'source_ref': '',
+                    'metadata': '{}',
+                    'created_by': '',
+                    'version': 1,
+                    'created_at': '2024-01-01 12:00:00',
+                    'updated_at': None
+                }
+            ],
+            [],  # tags for kb_001
         ]
 
         entries, total = repo.search_paginated(keyword='认证', page=1, page_size=10)
 
         assert total == 5
-        # 验证关键词被包含在查询中
-        call_args = mock_db.fetch_all.call_args
-        assert any('LIKE' in str(arg) for arg in call_args[0])
+        # 验证关键词被包含在查询中（第一次 fetch_all 调用是搜索查询）
+        search_call = mock_db.fetch_all.call_args_list[0]
+        assert any('LIKE' in str(arg) for arg in search_call[0])
 
     def test_count_by_type(self, repo, mock_db):
         """测试按类型统计"""

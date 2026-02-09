@@ -10,7 +10,7 @@ from .base import (
     TaskStatus, TaskType,
     TestCaseCategory, TestCasePriority, TestResultStatus,
     ReportType, TriggerType, ExecutionStatus, ExecutionType, ResultType,
-    EndpointSourceType, StepType, ScenarioStatus, ChangeType,
+    EndpointSourceType, ScenarioStepType, ScenarioStatus, ChangeType,
     KnowledgeType, KnowledgeStatus, KnowledgeSource,
 )
 
@@ -65,7 +65,7 @@ __all__ = [
     'TaskStatus', 'TaskType',
     'TestCaseCategory', 'TestCasePriority', 'TestResultStatus',
     'ReportType', 'TriggerType', 'ExecutionStatus', 'ExecutionType', 'ResultType',
-    'EndpointSourceType', 'StepType', 'ScenarioStatus', 'ChangeType',
+    'EndpointSourceType', 'ScenarioStepType', 'ScenarioStatus', 'ChangeType',
     'KnowledgeType', 'KnowledgeStatus', 'KnowledgeSource',
     # 模型
     'AnalysisTask', 'ParsedRequestRecord', 'AnalysisReport',
