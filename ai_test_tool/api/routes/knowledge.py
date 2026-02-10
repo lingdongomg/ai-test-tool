@@ -24,7 +24,7 @@ from ..dependencies import (
 )
 
 logger = get_logger()
-router = APIRouter(prefix="/knowledge", tags=["知识库"])
+router = APIRouter(tags=["知识库"])
 
 
 # ============== 请求/响应模型 ==============

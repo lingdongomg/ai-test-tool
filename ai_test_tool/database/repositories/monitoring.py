@@ -7,11 +7,15 @@ from typing import Any
 
 from .base import BaseRepository
 from ..models import (
-    AIInsight, InsightSeverity,
-    ProductionRequest, RequestSource,
-    HealthCheckExecution, HealthCheckResult, HealthCheckStatus,
+    AIInsight,
+    InsightSeverity,
+    ProductionRequest,
+    RequestSource,
+    HealthCheckExecution,
+    HealthCheckResult,
+    HealthCheckStatus,
 )
-from ...utils.sql_security import validate_fields_for_update, escape_like_pattern
+from ...utils.sql_security import validate_fields_for_update, escape_like_pattern, build_safe_like
 
 
 class AIInsightRepository(BaseRepository[AIInsight]):
@@ -31,10 +35,16 @@ class AIInsightRepository(BaseRepository[AIInsight]):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            data['insight_id'], data['insight_type'], data['title'],
-            data['description'], data['severity'], data['confidence'],
-            data['details'], data['recommendations'],
-            data['is_resolved'], data['resolved_at']
+            data["insight_id"],
+            data["insight_type"],
+            data["title"],
+            data["description"],
+            data["severity"],
+            data["confidence"],
+            data["details"],
+            data["recommendations"],
+            data["is_resolved"],
+            data["resolved_at"],
         )
         return self.db.execute(sql, params)
 
@@ -47,7 +57,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         severity: InsightSeverity | None = None,
         insight_type: str | None = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> list[AIInsight]:
         """获取未解决的洞察"""
         conditions = ["is_resolved = 0"]
@@ -94,7 +104,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
             GROUP BY severity
         """
         rows = self.db.fetch_all(sql, ())
-        return {row['severity']: row['count'] for row in rows}
+        return {row["severity"]: row["count"] for row in rows}
 
     def search(
         self,
@@ -103,7 +113,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         insight_type: str | None = None,
         is_resolved: bool | None = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> list[AIInsight]:
         """搜索洞察"""
         conditions = []
@@ -142,7 +152,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         severity: str | None = None,
         is_resolved: bool | None = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
     ) -> tuple[list[AIInsight], int]:
         """
         分页搜索洞察
@@ -170,7 +180,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         # 获取总数
         count_sql = f"SELECT COUNT(*) as count FROM ai_insights {where_clause}"
         count_result = self.db.fetch_one(count_sql, tuple(params) if params else None)
-        total = count_result['count'] if count_result else 0
+        total = count_result["count"] if count_result else 0
 
         # 获取分页数据
         offset = (page - 1) * page_size
@@ -190,7 +200,8 @@ class AIInsightRepository(BaseRepository[AIInsight]):
     def get_statistics(self) -> dict[str, Any]:
         """获取洞察统计"""
         # 总体统计
-        stats = self.db.fetch_one("""
+        stats = self.db.fetch_one(
+            """
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN is_resolved = 0 THEN 1 ELSE 0 END) as unresolved,
@@ -198,30 +209,32 @@ class AIInsightRepository(BaseRepository[AIInsight]):
                 SUM(CASE WHEN severity = 'medium' THEN 1 ELSE 0 END) as medium,
                 SUM(CASE WHEN severity = 'low' THEN 1 ELSE 0 END) as low
             FROM ai_insights
-        """)
+        """
+        )
 
         # 按类型统计
-        type_stats = self.db.fetch_all("""
+        type_stats = self.db.fetch_all(
+            """
             SELECT
                 insight_type,
                 COUNT(*) as count
             FROM ai_insights
             GROUP BY insight_type
             ORDER BY count DESC
-        """)
+        """
+        )
 
         return {
-            'total': stats['total'] if stats else 0,
-            'unresolved': stats['unresolved'] if stats else 0,
-            'by_severity': {
-                'high': stats['high'] if stats else 0,
-                'medium': stats['medium'] if stats else 0,
-                'low': stats['low'] if stats else 0
+            "total": stats["total"] if stats else 0,
+            "unresolved": stats["unresolved"] if stats else 0,
+            "by_severity": {
+                "high": stats["high"] if stats else 0,
+                "medium": stats["medium"] if stats else 0,
+                "low": stats["low"] if stats else 0,
             },
-            'by_type': [
-                {'type': t['insight_type'], 'count': t['count']}
-                for t in type_stats
-            ]
+            "by_type": [
+                {"type": t["insight_type"], "count": t["count"]} for t in type_stats
+            ],
         }
 
     def get_by_types(
@@ -229,7 +242,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         types: list[str],
         is_resolved: bool | None = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
     ) -> tuple[list[AIInsight], int]:
         """
         按多个类型获取洞察（用于告警列表）
@@ -259,7 +272,7 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         # 获取总数
         count_sql = f"SELECT COUNT(*) as count FROM ai_insights {where_clause}"
         count_result = self.db.fetch_one(count_sql, tuple(params))
-        total = count_result['count'] if count_result else 0
+        total = count_result["count"] if count_result else 0
 
         # 获取分页数据
         offset = (page - 1) * page_size
@@ -280,7 +293,9 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
 
     table_name = "production_requests"
     model_class = ProductionRequest
-    allowed_sort_fields = frozenset({"id", "created_at", "updated_at", "method", "last_check_at"})
+    allowed_sort_fields = frozenset(
+        {"id", "created_at", "updated_at", "method", "last_check_at"}
+    )
 
     def create(self, request: ProductionRequest) -> int:
         """创建监控请求"""
@@ -293,12 +308,21 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            data['request_id'], data['method'], data['url'],
-            data['headers'], data['body'], data['query_params'],
-            data['expected_status_code'], data['expected_response_pattern'],
-            data['source'], data['source_task_id'], data['tags'],
-            data['is_enabled'], data['last_check_at'],
-            data['last_check_status'], data['consecutive_failures']
+            data["request_id"],
+            data["method"],
+            data["url"],
+            data["headers"],
+            data["body"],
+            data["query_params"],
+            data["expected_status_code"],
+            data["expected_response_pattern"],
+            data["source"],
+            data["source_task_id"],
+            data["tags"],
+            data["is_enabled"],
+            data["last_check_at"],
+            data["last_check_status"],
+            data["consecutive_failures"],
         )
         return self.db.execute(sql, params)
 
@@ -317,8 +341,8 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
         if not updates:
             return 0
 
-        updates['updated_at'] = datetime.now().isoformat()
-        validated_fields = validate_fields_for_update(updates.keys(), self.table_name)
+        updates["updated_at"] = datetime.now().isoformat()
+        validated_fields = validate_fields_for_update(list(updates.keys()), self.table_name)
         set_clauses = [f"{key} = %s" for key in validated_fields]
         params = [updates[key] for key in validated_fields] + [request_id]
 
@@ -326,10 +350,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
         return self.db.execute(sql, tuple(params))
 
     def update_check_status(
-        self,
-        request_id: str,
-        status: str,
-        increment_failures: bool = False
+        self, request_id: str, status: str, increment_failures: bool = False
     ) -> int:
         """更新检查状态"""
         now = datetime.now().isoformat()
@@ -351,7 +372,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
 
     def set_enabled(self, request_id: str, enabled: bool) -> int:
         """设置启用状态"""
-        return self.update(request_id, {'is_enabled': 1 if enabled else 0})
+        return self.update(request_id, {"is_enabled": 1 if enabled else 0})
 
     def delete(self, request_id: str) -> int:
         """删除监控请求"""
@@ -376,7 +397,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
             GROUP BY last_check_status
         """
         rows = self.db.fetch_all(sql, ())
-        return {row['status'] or 'unknown': row['count'] for row in rows}
+        return {row["status"] or "unknown": row["count"] for row in rows}
 
     def search_paginated(
         self,
@@ -385,7 +406,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
         last_status: str | None = None,
         search: str | None = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
     ) -> tuple[list[ProductionRequest], int]:
         """
         分页搜索监控请求
@@ -393,7 +414,6 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
         Returns:
             元组: (请求列表, 总数)
         """
-        from ..utils.sql_security import build_safe_like
 
         conditions = []
         params: list[Any] = []
@@ -420,7 +440,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
         # 获取总数
         count_sql = f"SELECT COUNT(*) as count FROM production_requests {where_clause}"
         count_result = self.db.fetch_one(count_sql, tuple(params) if params else None)
-        total = count_result['count'] if count_result else 0
+        total = count_result["count"] if count_result else 0
 
         # 获取分页数据
         offset = (page - 1) * page_size
@@ -437,7 +457,8 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
 
     def get_statistics(self) -> dict[str, Any]:
         """获取监控请求统计"""
-        stats = self.db.fetch_one("""
+        stats = self.db.fetch_one(
+            """
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) as enabled,
@@ -445,18 +466,19 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
                 SUM(CASE WHEN last_check_status = 'unhealthy' THEN 1 ELSE 0 END) as unhealthy,
                 SUM(CASE WHEN consecutive_failures >= 3 THEN 1 ELSE 0 END) as critical
             FROM production_requests
-        """)
+        """
+        )
 
-        total = stats['total'] if stats else 0
-        healthy = stats['healthy'] if stats else 0
+        total = stats["total"] if stats else 0
+        healthy = stats["healthy"] if stats else 0
 
         return {
-            'total': total,
-            'enabled': stats['enabled'] if stats else 0,
-            'healthy': healthy,
-            'unhealthy': stats['unhealthy'] if stats else 0,
-            'critical': stats['critical'] if stats else 0,
-            'health_rate': round(healthy / total * 100, 2) if total > 0 else 0
+            "total": total,
+            "enabled": stats["enabled"] if stats else 0,
+            "healthy": healthy,
+            "unhealthy": stats["unhealthy"] if stats else 0,
+            "critical": stats["critical"] if stats else 0,
+            "health_rate": round(healthy / total * 100, 2) if total > 0 else 0,
         }
 
 
@@ -477,9 +499,15 @@ class HealthCheckExecutionRepository(BaseRepository[HealthCheckExecution]):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            data['execution_id'], data['base_url'], data['total_requests'],
-            data['healthy_count'], data['unhealthy_count'], data['status'],
-            data['trigger_type'], data['started_at'], data['completed_at']
+            data["execution_id"],
+            data["base_url"],
+            data["total_requests"],
+            data["healthy_count"],
+            data["unhealthy_count"],
+            data["status"],
+            data["trigger_type"],
+            data["started_at"],
+            data["completed_at"],
         )
         return self.db.execute(sql, params)
 
@@ -492,7 +520,7 @@ class HealthCheckExecutionRepository(BaseRepository[HealthCheckExecution]):
         execution_id: str,
         status: HealthCheckStatus,
         healthy_count: int | None = None,
-        unhealthy_count: int | None = None
+        unhealthy_count: int | None = None,
     ) -> int:
         """更新执行状态"""
         now = datetime.now().isoformat()
@@ -529,7 +557,7 @@ class HealthCheckExecutionRepository(BaseRepository[HealthCheckExecution]):
         status: str | None = None,
         trigger_type: str | None = None,
         page: int = 1,
-        page_size: int = 20
+        page_size: int = 20,
     ) -> tuple[list[HealthCheckExecution], int]:
         """
         分页搜索执行记录
@@ -551,9 +579,11 @@ class HealthCheckExecutionRepository(BaseRepository[HealthCheckExecution]):
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         # 获取总数
-        count_sql = f"SELECT COUNT(*) as count FROM health_check_executions {where_clause}"
+        count_sql = (
+            f"SELECT COUNT(*) as count FROM health_check_executions {where_clause}"
+        )
         count_result = self.db.fetch_one(count_sql, tuple(params) if params else None)
-        total = count_result['count'] if count_result else 0
+        total = count_result["count"] if count_result else 0
 
         # 获取分页数据
         offset = (page - 1) * page_size
@@ -586,9 +616,15 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
-            data['execution_id'], data['request_id'], data['success'],
-            data['status_code'], data['response_time_ms'], data['response_body'],
-            data['error_message'], data['ai_analysis'], data['checked_at']
+            data["execution_id"],
+            data["request_id"],
+            data["success"],
+            data["status_code"],
+            data["response_time_ms"],
+            data["response_body"],
+            data["error_message"],
+            data["ai_analysis"],
+            data["checked_at"],
         )
         return self.db.execute(sql, params)
 
@@ -606,11 +642,19 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
         params_list = []
         for r in results:
             data = r.to_dict()
-            params_list.append((
-                data['execution_id'], data['request_id'], data['success'],
-                data['status_code'], data['response_time_ms'], data['response_body'],
-                data['error_message'], data['ai_analysis'], data['checked_at']
-            ))
+            params_list.append(
+                (
+                    data["execution_id"],
+                    data["request_id"],
+                    data["success"],
+                    data["status_code"],
+                    data["response_time_ms"],
+                    data["response_body"],
+                    data["error_message"],
+                    data["ai_analysis"],
+                    data["checked_at"],
+                )
+            )
         return self.db.execute_many(sql, params_list)
 
     def get_by_execution(self, execution_id: str) -> list[HealthCheckResult]:
@@ -619,7 +663,9 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
         rows = self.db.fetch_all(sql, (execution_id,))
         return [HealthCheckResult.from_dict(row) for row in rows]
 
-    def get_by_request(self, request_id: str, limit: int = 100) -> list[HealthCheckResult]:
+    def get_by_request(
+        self, request_id: str, limit: int = 100
+    ) -> list[HealthCheckResult]:
         """获取请求的检查历史"""
         sql = """
             SELECT * FROM health_check_results
@@ -641,13 +687,15 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
             WHERE execution_id = %s
         """
         row = self.db.fetch_one(sql, (execution_id,))
-        return row if row else {'total': 0, 'success_count': 0, 'avg_response_time': 0}
+        return row if row else {"total": 0, "success_count": 0, "avg_response_time": 0}
 
     def delete_by_execution(self, execution_id: str) -> int:
         """删除执行批次的所有结果"""
         return self.delete_by_field("execution_id", execution_id)
 
-    def get_by_execution_with_request_details(self, execution_id: str) -> list[dict[str, Any]]:
+    def get_by_execution_with_request_details(
+        self, execution_id: str
+    ) -> list[dict[str, Any]]:
         """
         获取执行批次结果（含请求详情）
 
@@ -666,19 +714,23 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
 
     def get_today_statistics(self) -> dict[str, Any]:
         """获取今日检查统计"""
-        stats = self.db.fetch_one("""
+        stats = self.db.fetch_one(
+            """
             SELECT
                 COUNT(*) as total_checks,
                 SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
                 AVG(response_time_ms) as avg_response_time
             FROM health_check_results
             WHERE DATE(checked_at) = DATE('now')
-        """)
+        """
+        )
 
         return {
-            'total_checks': stats['total_checks'] if stats else 0,
-            'success_count': stats['success_count'] if stats else 0,
-            'avg_response_time': round(stats['avg_response_time'] or 0, 2) if stats else 0
+            "total_checks": stats["total_checks"] if stats else 0,
+            "success_count": stats["success_count"] if stats else 0,
+            "avg_response_time": (
+                round(stats["avg_response_time"] or 0, 2) if stats else 0
+            ),
         }
 
     def get_trend(self, days: int = 7) -> list[dict[str, Any]]:
@@ -694,14 +746,16 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
             GROUP BY DATE(checked_at)
             ORDER BY date
         """
-        rows = self.db.fetch_all(sql, (f'-{days} days',))
+        rows = self.db.fetch_all(sql, (f"-{days} days",))
         return [
             {
-                'date': str(t['date']),
-                'total': t['total'],
-                'success': t['success'],
-                'success_rate': round(t['success'] / t['total'] * 100, 2) if t['total'] > 0 else 0,
-                'avg_time': round(t['avg_time'] or 0, 2)
+                "date": str(t["date"]),
+                "total": t["total"],
+                "success": t["success"],
+                "success_rate": (
+                    round(t["success"] / t["total"] * 100, 2) if t["total"] > 0 else 0
+                ),
+                "avg_time": round(t["avg_time"] or 0, 2),
             }
             for t in rows
         ]
@@ -711,4 +765,3 @@ class HealthCheckResultRepository(BaseRepository[HealthCheckResult]):
 # 对话会话仓库
 # 该文件内容使用AI生成，注意识别准确性
 # =====================================================
-
