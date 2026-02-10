@@ -381,6 +381,83 @@ export const aiApi = {
   getStatistics: () => api.get('/ai/statistics')
 }
 
+// ==================== 知识库 API ====================
+export const knowledgeApi = {
+  // 知识列表（分页 + 筛选）
+  list: (params?: {
+    type?: string
+    status?: string
+    tags?: string
+    scope?: string
+    keyword?: string
+    page?: number
+    page_size?: number
+  }) => api.get('/knowledge', { params }),
+
+  // 待审核列表
+  listPending: (params?: {
+    limit?: number
+  }) => api.get('/knowledge/pending', { params }),
+
+  // 统计信息
+  getStatistics: () => api.get('/knowledge/statistics'),
+
+  // 知识详情
+  get: (knowledgeId: string) => api.get(`/knowledge/${knowledgeId}`),
+
+  // 创建知识
+  create: (data: {
+    title: string
+    content: string
+    type?: string
+    category?: string
+    scope?: string
+    priority?: number
+    tags?: string[]
+    metadata?: Record<string, any>
+  }) => api.post('/knowledge', data),
+
+  // 更新知识
+  update: (knowledgeId: string, data: {
+    title?: string
+    content?: string
+    category?: string
+    scope?: string
+    priority?: number
+    tags?: string[]
+    metadata?: Record<string, any>
+  }) => api.put(`/knowledge/${knowledgeId}`, data),
+
+  // 删除知识（归档）
+  delete: (knowledgeId: string) => api.delete(`/knowledge/${knowledgeId}`),
+
+  // 批量审核
+  review: (data: {
+    knowledge_ids: string[]
+    action: 'approve' | 'reject'
+  }) => api.post('/knowledge/review', data),
+
+  // 语义检索
+  search: (data: {
+    query: string
+    types?: string[]
+    tags?: string[]
+    scope?: string
+    top_k?: number
+    min_score?: number
+  }) => api.post('/knowledge/search', data),
+
+  // 知识学习
+  learn: (data: {
+    content: string
+    source_ref?: string
+    auto_approve?: boolean
+  }) => api.post('/knowledge/learn', data),
+
+  // 重建索引
+  rebuildIndex: () => api.post('/knowledge/rebuild-index'),
+}
+
 // ==================== 文档导入 API ====================
 export const importApi = {
   // 上传文件导入

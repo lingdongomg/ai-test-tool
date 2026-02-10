@@ -138,9 +138,6 @@ cp .example.env .env
 # LLM配置
 LLM_PROVIDER=ollama
 LLM_MODEL=qwen3:8b
-
-# 数据库配置（SQLite，无需额外配置）
-DATABASE_PATH=data/ai_test_tool.db
 ```
 
 ### 3. 启动服务

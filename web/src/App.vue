@@ -49,7 +49,15 @@
           <template #icon><ChatIcon /></template>
           AI 助手
         </t-menu-item>
-        
+
+        <!-- 知识库 -->
+        <t-submenu value="knowledge" title="知识库">
+          <template #icon><BookIcon /></template>
+          <t-menu-item value="knowledge-list">知识管理</t-menu-item>
+          <t-menu-item value="knowledge-pending">待审核</t-menu-item>
+          <t-menu-item value="knowledge-search">检索测试</t-menu-item>
+        </t-submenu>
+
         <t-divider style="margin: 8px 16px; background: rgba(255,255,255,0.1);" />
         
         <!-- 系统设置 -->
@@ -93,13 +101,14 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { 
-  DashboardIcon, 
-  ApiIcon, 
+import {
+  DashboardIcon,
+  ApiIcon,
   CodeIcon,
   ChartLineIcon,
   FileSearchIcon,
   ChatIcon,
+  BookIcon,
   SettingIcon,
   FileImportIcon
 } from 'tdesign-icons-vue-next'
@@ -139,7 +148,14 @@ const activeMenu = computed(() => {
     if (path.includes('/tasks')) return 'insight-tasks'
     if (path.includes('/reports')) return 'insight-reports'
   }
-  
+
+  // 知识库模块
+  if (path.startsWith('/knowledge')) {
+    if (path.includes('/list')) return 'knowledge-list'
+    if (path.includes('/pending')) return 'knowledge-pending'
+    if (path.includes('/search')) return 'knowledge-search'
+  }
+
   // 其他页面
   if (path === '/ai') return 'ai'
   if (path === '/import') return 'import'
@@ -191,6 +207,11 @@ const breadcrumbs = computed(() => {
         crumbs.push({ title: '分析报告' })
       }
     }
+  } else if (path.startsWith('/knowledge')) {
+    crumbs.push({ title: '知识库', path: '/knowledge/list' })
+    if (path.includes('/list')) crumbs.push({ title: '知识管理' })
+    else if (path.includes('/pending')) crumbs.push({ title: '待审核' })
+    else if (path.includes('/search')) crumbs.push({ title: '检索测试' })
   } else {
     crumbs.push({ title: route.meta?.title as string || '首页' })
   }
@@ -214,6 +235,9 @@ watch(() => route.path, (path) => {
   if (path.startsWith('/insights') && !expandedMenus.value.includes('insights')) {
     expandedMenus.value.push('insights')
   }
+  if (path.startsWith('/knowledge') && !expandedMenus.value.includes('knowledge')) {
+    expandedMenus.value.push('knowledge')
+  }
 }, { immediate: true })
 
 // 菜单点击处理
@@ -231,6 +255,9 @@ const handleMenuChange = (value: string) => {
     'insight-tasks': '/insights/tasks',
     'insight-reports': '/insights/reports',
     'ai': '/ai',
+    'knowledge-list': '/knowledge/list',
+    'knowledge-pending': '/knowledge/pending',
+    'knowledge-search': '/knowledge/search',
     'import': '/import'
   }
   
@@ -255,8 +282,12 @@ const handleQuickAction = (action: string) => {
 
 <style scoped>
 .sidebar {
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
   min-height: 100vh;
+  border-right: none;
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 10;
 }
 
 .menu-transparent {
@@ -266,35 +297,41 @@ const handleQuickAction = (action: string) => {
 .logo {
   display: flex;
   align-items: center;
-  padding: 20px 24px;
+  padding: 0 24px;
   color: #fff;
   height: 64px;
   box-sizing: border-box;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 12px;
 }
 
 .logo-icon {
   font-size: 28px;
-  color: #4080ff;
+  color: #818cf8;
+  filter: drop-shadow(0 0 8px rgba(129, 140, 248, 0.4));
 }
 
 .logo-text {
   margin-left: 12px;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   white-space: nowrap;
-  background: linear-gradient(90deg, #4080ff, #36d1dc);
+  background: linear-gradient(135deg, #818cf8, #c084fc);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .header {
-  background: #fff;
-  padding: 0 24px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  padding: 0 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  height: 64px;
+  box-shadow: 0 1px 0 var(--border-color);
+  height: 56px;
+  border-bottom: none;
 }
 
 .header-left {
@@ -303,9 +340,9 @@ const handleQuickAction = (action: string) => {
 }
 
 .header-title {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.9);
+  color: var(--text-primary);
 }
 
 .header-right {
@@ -315,27 +352,62 @@ const handleQuickAction = (action: string) => {
 }
 
 .content {
-  padding: 20px;
-  background: #f5f7fa;
-  min-height: calc(100vh - 64px);
+  padding: 28px;
+  background: var(--bg-color);
+  min-height: calc(100vh - 56px);
   overflow-y: auto;
 }
 
+/* 菜单项样式 */
 :deep(.t-menu__item) {
-  border-radius: 8px;
-  margin: 2px 8px;
+  border-radius: 10px;
+  margin: 2px 12px;
+  height: 40px;
+  line-height: 40px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  font-size: 14px;
+}
+
+:deep(.t-menu__item:hover) {
+  background: rgba(129, 140, 248, 0.1) !important;
 }
 
 :deep(.t-menu__item.t-is-active) {
-  background: rgba(64, 128, 255, 0.15) !important;
+  background: rgba(129, 140, 248, 0.18) !important;
+  font-weight: 500;
+}
+
+:deep(.t-menu__item.t-is-active::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 25%;
+  height: 50%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #818cf8, #a78bfa);
+  box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
 }
 
 :deep(.t-submenu__title) {
-  border-radius: 8px;
-  margin: 2px 8px;
+  border-radius: 10px;
+  margin: 2px 12px;
+  height: 40px;
+  line-height: 40px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 14px;
+}
+
+:deep(.t-submenu__title:hover) {
+  background: rgba(129, 140, 248, 0.08) !important;
 }
 
 :deep(.t-breadcrumb) {
   font-size: 14px;
+}
+
+:deep(.t-breadcrumb__inner) {
+  color: var(--text-tertiary) !important;
 }
 </style>

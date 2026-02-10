@@ -216,8 +216,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { AddIcon, RefreshIcon } from 'tdesign-icons-vue-next'
-
-const API_BASE = '/api/v2/knowledge'
+import { knowledgeApi } from '../../api/v2'
 
 // 状态
 const loading = ref(false)
@@ -277,21 +276,21 @@ const getTypeTagType = (type: string) => typeTagTypes[type] || ''
 const loadList = async () => {
   loading.value = true
   try {
-    const params = new URLSearchParams()
-    if (filters.type) params.append('type', filters.type)
-    if (filters.status) params.append('status', filters.status)
-    if (filters.tags) params.append('tags', filters.tags)
-    if (filters.keyword) params.append('keyword', filters.keyword)
-    params.append('page', String(pagination.page))
-    params.append('page_size', String(pagination.pageSize))
+    const params: Record<string, any> = {
+      page: pagination.page,
+      page_size: pagination.pageSize
+    }
+    if (filters.type) params.type = filters.type
+    if (filters.status) params.status = filters.status
+    if (filters.tags) params.tags = filters.tags
+    if (filters.keyword) params.keyword = filters.keyword
 
-    const response = await fetch(`${API_BASE}?${params}`)
-    const data = await response.json()
+    const data: any = await knowledgeApi.list(params)
 
     knowledgeList.value = data.items || []
     pagination.total = data.total || 0
   } catch (error) {
-    MessagePlugin.error('加载失败')
+    // axios 拦截器已处理错误提示
   } finally {
     loading.value = false
   }
@@ -300,8 +299,7 @@ const loadList = async () => {
 // 加载统计
 const loadStatistics = async () => {
   try {
-    const response = await fetch(`${API_BASE}/statistics`)
-    statistics.value = await response.json()
+    statistics.value = await knowledgeApi.getStatistics()
   } catch (error) {
     console.error('Failed to load statistics', error)
   }
@@ -366,27 +364,18 @@ const saveKnowledge = async () => {
 
   saving.value = true
   try {
-    const url = editingKnowledge.value
-      ? `${API_BASE}/${editingKnowledge.value.knowledge_id}`
-      : API_BASE
-    const method = editingKnowledge.value ? 'PUT' : 'POST'
-
-    const response = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData)
-    })
-
-    if (response.ok) {
-      MessagePlugin.success(editingKnowledge.value ? '更新成功' : '创建成功')
-      showCreateDialog.value = false
-      resetForm()
-      refreshList()
+    if (editingKnowledge.value) {
+      await knowledgeApi.update(editingKnowledge.value.knowledge_id, formData)
+      MessagePlugin.success('更新成功')
     } else {
-      throw new Error('保存失败')
+      await knowledgeApi.create(formData)
+      MessagePlugin.success('创建成功')
     }
+    showCreateDialog.value = false
+    resetForm()
+    refreshList()
   } catch (error) {
-    MessagePlugin.error('保存失败')
+    // axios 拦截器已处理错误提示
   } finally {
     saving.value = false
   }
@@ -399,16 +388,11 @@ const deleteKnowledge = async (row: any) => {
     body: '确定要删除这条知识吗？',
     onConfirm: async () => {
       try {
-        const response = await fetch(`${API_BASE}/${row.knowledge_id}`, {
-          method: 'DELETE'
-        })
-
-        if (response.ok) {
-          MessagePlugin.success('删除成功')
-          refreshList()
-        }
+        await knowledgeApi.delete(row.knowledge_id)
+        MessagePlugin.success('删除成功')
+        refreshList()
       } catch (error) {
-        MessagePlugin.error('删除失败')
+        // axios 拦截器已处理错误提示
       }
     },
     onClose: () => {

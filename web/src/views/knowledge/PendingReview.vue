@@ -129,8 +129,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { RefreshIcon } from 'tdesign-icons-vue-next'
-
-const API_BASE = '/api/v2/knowledge'
+import { knowledgeApi } from '../../api/v2'
 
 // 状态
 const loading = ref(false)
@@ -172,11 +171,10 @@ const getTypeTagType = (type: string) => typeTagTypes[type] || ''
 const loadList = async () => {
   loading.value = true
   try {
-    const response = await fetch(`${API_BASE}/pending?limit=100`)
-    const data = await response.json()
+    const data: any = await knowledgeApi.listPending({ limit: 100 })
     pendingList.value = data.items || []
   } catch (error) {
-    MessagePlugin.error('加载失败')
+    // axios 拦截器已处理错误提示
   } finally {
     loading.value = false
   }
@@ -217,13 +215,7 @@ const saveAndApprove = async () => {
   saving.value = true
   try {
     // 先更新
-    const updateResponse = await fetch(`${API_BASE}/${currentKnowledge.value.knowledge_id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editForm)
-    })
-
-    if (!updateResponse.ok) throw new Error('更新失败')
+    await knowledgeApi.update(currentKnowledge.value.knowledge_id, editForm)
 
     // 再审核通过
     await doReview([currentKnowledge.value.knowledge_id], 'approve')
@@ -231,7 +223,7 @@ const saveAndApprove = async () => {
     showEditDialog.value = false
     loadList()
   } catch (error) {
-    MessagePlugin.error('操作失败')
+    // axios 拦截器已处理错误提示
   } finally {
     saving.value = false
   }
@@ -239,15 +231,7 @@ const saveAndApprove = async () => {
 
 // 审核操作
 const doReview = async (ids: string[], action: 'approve' | 'reject') => {
-  const response = await fetch(`${API_BASE}/review`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ knowledge_ids: ids, action })
-  })
-
-  if (!response.ok) throw new Error('审核失败')
-
-  const result = await response.json()
+  const result: any = await knowledgeApi.review({ knowledge_ids: ids, action })
   MessagePlugin.success(result.message)
 }
 

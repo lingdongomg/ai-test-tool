@@ -112,8 +112,7 @@
 import { ref, reactive } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { SearchIcon } from 'tdesign-icons-vue-next'
-
-const API_BASE = '/api/v2/knowledge'
+import { knowledgeApi } from '../../api/v2'
 
 // 状态
 const searching = ref(false)
@@ -159,17 +158,8 @@ const doSearch = async () => {
   searched.value = true
 
   try {
-    const response = await fetch(`${API_BASE}/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(searchForm)
-    })
-
-    if (!response.ok) throw new Error('检索失败')
-
-    searchResult.value = await response.json()
+    searchResult.value = await knowledgeApi.search(searchForm)
   } catch (error) {
-    MessagePlugin.error('检索失败')
     searchResult.value = null
   } finally {
     searching.value = false
