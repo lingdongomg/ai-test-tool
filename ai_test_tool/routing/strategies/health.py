@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from ..models import ScenarioType, StrategyPriority
 from ..registry import strategy, register_strategy, AnalysisStrategy
+from .alert import _extract_service_from_url
 
 
 # 健康度评分策略
@@ -32,7 +33,7 @@ def calculate_health_score(context: dict[str, Any]) -> dict[str, Any]:
     3. 延迟
     4. 吞吐量
     """
-    from ..health import (
+    from ...health import (
         HealthScoreEngine,
         create_availability_metric,
         create_error_rate_metric,
@@ -147,7 +148,7 @@ def generate_health_report(context: dict[str, Any]) -> dict[str, Any]:
     3. 问题列表
     4. 改进建议
     """
-    from ..health import (
+    from ...health import (
         HealthScoreEngine,
         ComponentHealthBuilder,
         HealthStatus,
@@ -230,7 +231,7 @@ def analyze_health_trend(context: dict[str, Any]) -> dict[str, Any]:
 
     检测健康度是否在改善、稳定还是恶化
     """
-    from ..health import (
+    from ...health import (
         HealthScoreEngine,
         TrendDirection,
         create_error_rate_metric,

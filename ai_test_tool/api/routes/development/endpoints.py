@@ -46,7 +46,7 @@ async def list_endpoints(
 
     if search:
         safe_search = build_safe_like(search)
-        conditions.append("(e.path LIKE %s ESCAPE '\\\\' OR e.description LIKE %s ESCAPE '\\\\')")
+        conditions.append("(e.path LIKE %s ESCAPE '\\' OR e.description LIKE %s ESCAPE '\\')")
         params.extend([safe_search, safe_search])
 
     if method:
@@ -116,7 +116,7 @@ async def get_endpoint_detail(endpoint_id: str, db: DatabaseManager = Depends(ge
     # 注：这里的 endpoint_id 来自数据库验证后的记录，是安全的
     cases_sql = """
         SELECT * FROM test_cases
-        WHERE case_id LIKE %s ESCAPE '\\\\'
+        WHERE case_id LIKE %s ESCAPE '\\'
         ORDER BY priority, created_at DESC
     """
     cases = db.fetch_all(cases_sql, (build_safe_like(endpoint_id, "end"),))

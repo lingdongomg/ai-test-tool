@@ -154,14 +154,20 @@ ANALYSIS_REPORT_PROMPT = """你是一位资深的技术分析师，请根据以�
 
 
 # 测试用例生成Prompt
-TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根据以下API信息生成测试用例。
+TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根据以下API信息生成高质量的测试用例。
 
 ## API信息
 ```json
 {api_info}
 ```
 
-## 示例请求
+## 参数分析要求
+请仔细分析API信息中的以下内容，并据此生成测试数据：
+1. **parameters**: 每个参数的 name、in（query/path/header）、type、required、约束（minLength/maxLength/minimum/maximum/enum 等）
+2. **request_body**: 请求体的 schema 定义，包括每个字段的类型、是否必填、约束条件
+3. **responses**: 预期的响应结构
+
+## 示例请求（可参考真实使用模式）
 ```json
 {sample_requests}
 ```
@@ -171,6 +177,13 @@ TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根�
 - quick: 快速测试（仅正常和基本异常）
 - security: 安全测试（注入、越权、敏感信息）
 
+## 生成规则
+1. **正常用例**：为每个必填参数填入合理值，可选参数也尽量覆盖
+2. **边界用例**：空字符串、最大/最小值、超长字符串、特殊字符
+3. **异常用例**：缺少必填参数、类型错误（字符串传数字位置）、非法枚举值
+4. **安全用例**：SQL注入、XSS、路径遍历等
+5. 每个用例的 body 和 query_params 必须包含具体的参数值，不要留空
+
 ## 输出格式
 **重要：你必须且只能输出一个有效的JSON对象，不要输出任何其他内容。**
 
@@ -178,21 +191,16 @@ TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根�
 {{
   "test_cases": [
     {{
-      "id": "TC001",
       "name": "测试用例名称",
       "description": "测试描述",
       "category": "normal/boundary/exception/security",
       "priority": "high/medium/low",
       "method": "HTTP方法",
-      "url": "请求URL（不含查询参数）",
-      "headers": {{"header名": "header值"}},
-      "body": {{"字段名": "字段值"}},
-      "query_params": {{"参数名": "参数值"}},
+      "url": "请求URL（含路径参数替换后的完整路径）",
+      "headers": {{"Content-Type": "application/json"}},
+      "body": {{"字段名": "具体测试值"}},
+      "query_params": {{"参数名": "具体测试值"}},
       "expected_status": 200,
-      "expected_response": {{
-        "fields": ["期望响应包含的字段"],
-        "values": {{"字段名": "期望值（可选）"}}
-      }},
       "assertions": [
         {{
           "type": "status_code/response_time/json_path/contains/not_contains",
@@ -206,13 +214,6 @@ TEST_CASE_GENERATION_PROMPT = """你是一位资深的测试工程师，请根�
   ]
 }}
 ```
-
-## 断言类型说明
-- status_code: 验证HTTP状态码
-- response_time: 验证响应时间
-- json_path: 使用JSONPath验证响应字段
-- contains: 响应体包含指定内容
-- not_contains: 响应体不包含指定内容
 
 请直接输出JSON："""
 

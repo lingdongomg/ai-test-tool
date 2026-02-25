@@ -81,7 +81,7 @@ async def upload_log_file(
     detect_types: str | None = Form(default=None),
     include_ai_analysis: bool = Form(default=True),
     max_lines: int | None = Form(default=None, description="最大处理行数"),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks | None = None,
     task_repo: TaskRepository = Depends(get_task_repository),
 ):
     """
@@ -94,7 +94,10 @@ async def upload_log_file(
     """
     # 验证文件类型
     allowed_extensions = {'.log', '.txt', '.json'}
-    file_ext = os.path.splitext(file.filename)[1].lower()
+    # 处理 Windows 8.3 短文件名中被截断的扩展名（如 .json → .jso）
+    short_ext_map = {'.jso': '.json', '.lo': '.log', '.tx': '.txt'}
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
+    file_ext = short_ext_map.get(file_ext, file_ext)
 
     if file_ext not in allowed_extensions:
         raise HTTPException(
@@ -117,9 +120,16 @@ async def upload_log_file(
     file_path = os.path.join(upload_dir, f"{task_id}_{file.filename}")
 
     try:
-        content = await file.read()
+        # 流式写入文件，避免大文件一次性占满内存
+        file_size = 0
+        chunk_size = 1024 * 1024  # 1MB per chunk
         with open(file_path, 'wb') as f:
-            f.write(content)
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                f.write(chunk)
 
         # 创建分析任务
         task_name = f"日志分析-{file.filename}" if analysis_type == "anomaly" else f"请求提取-{file.filename}"
@@ -127,7 +137,7 @@ async def upload_log_file(
             task_id=task_id,
             name=task_name,
             log_file_path=file_path,
-            log_file_size=len(content),
+            log_file_size=file_size,
         )
         task_repo.create(task)
 
@@ -154,7 +164,7 @@ async def upload_log_file(
             "success": True,
             "task_id": task_id,
             "file_name": file.filename,
-            "file_size": len(content),
+            "file_size": file_size,
             "analysis_type": analysis_type,
             "message": f"文件上传成功，正在后台{'解析请求' if analysis_type == 'request' else '检测异常'}"
         }
@@ -352,11 +362,56 @@ def _parse_requests_task_sync(
 
         task_logger.info(f"请求解析完成: 共提取 {total_requests} 个请求")
 
+        # 从解析结果中自动学习知识
+        _trigger_knowledge_learning_from_requests(task_id, task_logger)
+
     except Exception as e:
         # 记录详细错误信息，包含堆栈追踪
         error_detail = f"{type(e).__name__}: {str(e)}\n\n堆栈追踪:\n{tb.format_exc()}"
         logger.error(f"请求解析任务失败 [{task_id}]: {error_detail}")
         task_repo.update_status(task_id, TaskStatus.FAILED, error_message=error_detail)
+
+
+def _trigger_knowledge_learning_from_requests(task_id: str, task_logger=None):
+    """从解析的请求中自动提取并保存知识"""
+    _logger = task_logger or logger
+    try:
+        from ..dependencies import get_knowledge_learner
+        request_repo = RequestRepository()
+
+        # 查询该任务解析出的所有请求
+        rows = request_repo.db.fetch_all(
+            "SELECT * FROM parsed_requests WHERE task_id = %s",
+            (task_id,)
+        )
+        if not rows:
+            _logger.info(f"任务 {task_id} 无解析请求，跳过知识学习")
+            return
+
+        parsed_requests = [dict(r) for r in rows]
+        learner = get_knowledge_learner()
+
+        # 使用 extract_from_log_analysis 提取知识建议
+        suggestions = learner.extract_from_log_analysis(parsed_requests, task_id)
+        if not suggestions:
+            _logger.info(f"任务 {task_id} 未提取到知识建议")
+            return
+
+        # 保存知识条目
+        created_ids = []
+        for suggestion in suggestions:
+            if suggestion.confidence < 0.5:
+                continue
+            item = learner.store.create_from_suggestion(suggestion, "auto_learning")
+            created_ids.append(item.knowledge_id)
+            # 高置信度自动通过审核
+            if suggestion.confidence >= 0.8:
+                learner.store.approve([item.knowledge_id])
+
+        _logger.info(f"任务 {task_id} 自动学习完成，创建 {len(created_ids)} 条知识")
+
+    except Exception as e:
+        _logger.warn(f"知识自动学习失败（不影响主流程）: {e}")
 
 
 async def _parse_requests_task(
@@ -566,39 +621,48 @@ async def detect_anomalies(
         if request.task_id:
             report = service.detect_anomalies_from_task(
                 task_id=request.task_id,
-                detect_types=request.detect_types,
                 include_ai_analysis=request.include_ai_analysis
             )
+            return {
+                "success": True,
+                "report_id": report.report_id,
+                "title": report.title,
+                "summary": report.summary,
+                "total_anomalies": report.total_anomalies,
+                "critical_count": report.critical_count,
+                "error_count": report.error_count,
+                "warning_count": report.warning_count,
+                "anomalies": [
+                    {
+                        "type": a.anomaly_type.value if hasattr(a.anomaly_type, 'value') else str(a.anomaly_type),
+                        "severity": a.severity.value if hasattr(a.severity, 'value') else str(a.severity),
+                        "title": a.title,
+                        "description": a.description,
+                        "log_content": a.log_content,
+                    }
+                    for a in report.anomalies[:50]
+                ]
+            }
         elif request.log_content:
-            report = service.detect_anomalies_from_content(
-                content=request.log_content,
-                detect_types=request.detect_types,
-                include_ai_analysis=request.include_ai_analysis
+            anomalies = service.detect_anomalies_from_log_content(
+                log_content=request.log_content,
             )
+            return {
+                "success": True,
+                "total_anomalies": len(anomalies),
+                "anomalies": [
+                    {
+                        "type": a.anomaly_type.value if hasattr(a.anomaly_type, 'value') else str(a.anomaly_type),
+                        "severity": a.severity.value if hasattr(a.severity, 'value') else str(a.severity),
+                        "title": a.title,
+                        "description": a.description,
+                        "log_content": a.log_content,
+                    }
+                    for a in anomalies[:50]
+                ]
+            }
         else:
             raise HTTPException(status_code=400, detail="请提供 task_id 或 log_content")
-
-        return {
-            "success": True,
-            "report_id": report.report_id,
-            "title": report.title,
-            "summary": report.summary,
-            "total_anomalies": report.total_anomalies,
-            "critical_count": report.critical_count,
-            "error_count": report.error_count,
-            "warning_count": report.warning_count,
-            "anomalies": [
-                {
-                    "type": a.type,
-                    "severity": a.severity,
-                    "message": a.message,
-                    "line_number": a.line_number,
-                    "context": a.context,
-                    "ai_analysis": a.ai_analysis
-                }
-                for a in report.anomalies[:50]  # 限制返回数量
-            ]
-        }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

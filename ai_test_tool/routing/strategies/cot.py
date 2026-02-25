@@ -29,7 +29,7 @@ def analyze_errors_cot(context: dict[str, Any]) -> dict[str, Any]:
     推理链步骤：
     1. 错误识别 → 2. 上下文分析 → 3. 模式匹配 → 4. 影响评估 → 5. 解决建议
     """
-    from ..reasoning import ErrorDiagnosisChain
+    from ...reasoning import ErrorDiagnosisChain
 
     log_content = context.get("log_content", "")
     if not log_content:
@@ -82,7 +82,7 @@ def analyze_performance_cot(context: dict[str, Any]) -> dict[str, Any]:
     推理链步骤：
     1. 指标提取 → 2. 基线对比 → 3. 瓶颈定位 → 4. 优化建议
     """
-    from ..reasoning import PerformanceAnalysisChain
+    from ...reasoning import PerformanceAnalysisChain
     import json
 
     requests = context.get("requests", [])
@@ -124,7 +124,7 @@ def analyze_root_cause_cot(context: dict[str, Any]) -> dict[str, Any]:
     推理链步骤：
     1. 症状收集 → 2. 时序分析 → 3. 因果推理 → 4. 根因定位 → 5. 验证建议
     """
-    from ..reasoning import RootCauseChain
+    from ...reasoning import RootCauseChain
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])
@@ -169,7 +169,7 @@ def analyze_security_cot(context: dict[str, Any]) -> dict[str, Any]:
     推理链步骤：
     1. 威胁识别 → 2. 漏洞分析 → 3. 风险评估 → 4. 修复建议
     """
-    from ..reasoning import SecurityAuditChain
+    from ...reasoning import SecurityAuditChain
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])

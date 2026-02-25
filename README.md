@@ -146,6 +146,8 @@ LLM_MODEL=qwen3:8b
 # 启动后端API服务
 python server.py
 
+nohup python server.py > log.txt &
+
 # 启动前端开发服务器
 cd web && npm run dev
 ```
