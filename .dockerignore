@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+
+# Node
+web/node_modules
+web/dist
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Data & logs (mounted as volumes)
+data
+logs
+uploads
+
+# Environment
+.env
+
+# OpenSpec / docs
+openspec
+CLAUDE.md
+CODEBUDDY.md
+AGENTS.md
+README.md
+
+# Test artifacts
+.coverage
+htmlcov
+tests
+web/tests
+
+# Misc
+*.log
+__pycache__
+*.json
+!web/package.json
+!web/tsconfig.json
+!web/tsconfig.app.json
