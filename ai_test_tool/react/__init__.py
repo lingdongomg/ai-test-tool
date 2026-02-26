@@ -74,6 +74,8 @@ from .tools import (
     CalculateStatsTool,
     ExtractPatternsTool,
     CompareTimePeriodsTool,
+    PythonExecTool,
+    WebSearchTool,
 )
 from .engine import ReActEngine, create_react_engine
 from .agents import (
@@ -107,6 +109,8 @@ __all__ = [
     "CalculateStatsTool",
     "ExtractPatternsTool",
     "CompareTimePeriodsTool",
+    "PythonExecTool",
+    "WebSearchTool",
     # 引擎
     "ReActEngine",
     "create_react_engine",

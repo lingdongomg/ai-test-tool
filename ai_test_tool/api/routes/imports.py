@@ -547,5 +547,9 @@ def _endpoint_to_dict(endpoint: Any) -> dict[str, Any]:
         "description": endpoint.description,
         "tags": endpoint.tags,
         "source_type": endpoint.source_type.value,
-        "is_deprecated": endpoint.is_deprecated
+        "is_deprecated": endpoint.is_deprecated,
+        "parameters": endpoint.parameters or [],
+        "request_body": endpoint.request_body or {},
+        "responses": endpoint.responses or {},
+        "security": endpoint.security if hasattr(endpoint, 'security') else [],
     }

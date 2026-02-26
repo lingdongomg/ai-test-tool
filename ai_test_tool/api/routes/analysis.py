@@ -3,11 +3,14 @@
 场景四：智能路由分析（自动场景识别 + 策略匹配 + 执行）
 """
 
+import json
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ...services.intelligent_analysis import IntelligentAnalysisService
+from ...react.engine import create_react_engine
 from ...utils.logger import get_logger
 from ..dependencies import get_intelligent_analysis_service
 
@@ -138,3 +141,47 @@ async def get_statistics(
     包含路由执行次数、成功率、回退使用次数、注册表状态等。
     """
     return service.get_statistics()
+
+
+# ==================== ReAct 流式分析 ====================
+
+class ReactStreamRequest(BaseModel):
+    """ReAct 流式分析请求"""
+    task: str = Field(..., min_length=1, description="分析任务描述")
+    log_content: str | None = Field(default=None, description="日志内容")
+    requests: list[dict[str, Any]] | None = Field(default=None, description="请求数据")
+    max_iterations: int = Field(default=10, ge=1, le=20, description="最大迭代次数")
+
+
+@router.post("/react/stream")
+async def react_stream(request: ReactStreamRequest):
+    """
+    ReAct 流式分析
+
+    通过 SSE (Server-Sent Events) 实时推送 ReAct 推理过程，
+    包括每一步的思考、行动和观察结果。
+
+    事件类型: started, step_start, thought, action, observation, step_end, finished, error
+    """
+    from ...react.models import ReActConfig
+
+    config = ReActConfig(max_iterations=request.max_iterations)
+    engine = create_react_engine(config=config)
+
+    async def event_generator():
+        async for event in engine.run_stream(
+            task=request.task,
+            log_content=request.log_content or "",
+            requests=request.requests,
+        ):
+            yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

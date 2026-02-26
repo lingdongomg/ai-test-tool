@@ -22,6 +22,8 @@ from .models import (
     ChainStatus,
 )
 from ..llm.provider import LLMProvider, get_llm_provider
+from ..reflection.engine import ReflectionEngine
+from ..reflection.models import ReflectionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,8 @@ class ChainOfThoughtEngine:
     def __init__(
         self,
         llm_provider: LLMProvider | None = None,
-        config: ChainConfig | None = None
+        config: ChainConfig | None = None,
+        reflection_config: ReflectionConfig | None = None,
     ):
         """
         初始化推理引擎
@@ -50,12 +53,14 @@ class ChainOfThoughtEngine:
         Args:
             llm_provider: LLM提供者
             config: 链配置（如果不提供则使用默认配置）
+            reflection_config: Reflection 配置（CRITIC 模式，None=不启用）
         """
         self._llm_provider = llm_provider
         self.config = config or ChainConfig(
             chain_id="default",
             name="Default Chain"
         )
+        self.reflection_config = reflection_config
 
         # 步骤注册表
         self._steps: list[ThinkingStep] = []
@@ -176,6 +181,10 @@ class ChainOfThoughtEngine:
 
                 # 更新上下文
                 if result.is_success and result.output is not None:
+                    # CRITIC 模式：步骤间交叉验证
+                    if self.reflection_config and self.reflection_config.enabled:
+                        result = self._critic_validate(step, result)
+
                     if step.output_key:
                         context.set_step_output(step.output_key, result.output)
                     context.set_step_output(step.step_id, result.output)
@@ -425,6 +434,23 @@ class ChainOfThoughtEngine:
 
         # 解析失败，返回原始文本
         return response
+
+    def _critic_validate(self, step: ThinkingStep, result: StepResult) -> StepResult:
+        """CRITIC 模式：对步骤输出进行验证"""
+        reflection_engine = ReflectionEngine(
+            llm_provider=self.llm_provider,
+            config=self.reflection_config,
+        )
+        output_str = str(result.output) if result.output is not None else ""
+        refined = reflection_engine.reflect_and_refine(
+            output=output_str,
+            task=f"步骤 '{step.name}': {step.description}",
+        )
+        if refined.improved:
+            logger.info(f"CRITIC: 步骤 {step.name} 输出已改进")
+            result.output = refined.refined
+            result.metadata["critic_rounds"] = refined.total_rounds
+        return result
 
     def _get_cache_key(self, step: ThinkingStep, context: ChainContext) -> str:
         """生成缓存键"""

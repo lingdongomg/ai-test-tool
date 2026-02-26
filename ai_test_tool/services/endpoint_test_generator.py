@@ -285,9 +285,9 @@ class EndpointTestGeneratorService:
         # 分析参数的边界值
         all_params = list(parameters)
         
-        # 从 request_body 提取参数
+        # 从 request_body 提取参数（兼容 Swagger 2.0 和 OpenAPI 3.0）
         if request_body:
-            schema = request_body.get('content', {}).get('application/json', {}).get('schema', {})
+            schema = self._extract_body_schema(request_body)
             properties = schema.get('properties', {})
             for name, prop in properties.items():
                 all_params.append({
@@ -663,23 +663,43 @@ class EndpointTestGeneratorService:
         else:
             return "test_value"
     
+    def _extract_body_schema(self, request_body: dict) -> dict[str, Any]:
+        """
+        从 request_body 中提取 schema，兼容 Swagger 2.0 和 OpenAPI 3.0 格式
+
+        OpenAPI 3.0: {"content": {"application/json": {"schema": {...}}}}
+        Swagger 2.0: {"schema": {...}}
+        """
+        # OpenAPI 3.0 格式
+        content = request_body.get('content', {})
+        if content:
+            json_content = content.get('application/json', {})
+            schema = json_content.get('schema', {})
+            if schema:
+                return schema
+
+        # Swagger 2.0 格式 (body 参数直接包含 schema)
+        schema = request_body.get('schema', {})
+        if schema:
+            return schema
+
+        return {}
+
     def _generate_request_body(self, request_body: dict) -> dict[str, Any]:
         """根据 request_body 定义生成请求体"""
-        content = request_body.get('content', {})
-        json_content = content.get('application/json', {})
-        schema = json_content.get('schema', {})
-        
+        schema = self._extract_body_schema(request_body)
+
         if schema.get('example'):
             return schema['example']
-        
+
         properties = schema.get('properties', {})
         body: dict[str, Any] = {}
-        
+
         for name, prop in properties.items():
             prop_type = prop.get('type', 'string')
             example = prop.get('example')
             default = prop.get('default')
-            
+
             if example is not None:
                 body[name] = example
             elif default is not None:
@@ -696,7 +716,7 @@ class EndpointTestGeneratorService:
                 body[name] = []
             elif prop_type == 'object':
                 body[name] = {}
-        
+
         return body
     
     def _deduplicate_cases(self, cases: list[GeneratedTestCase]) -> list[GeneratedTestCase]:
