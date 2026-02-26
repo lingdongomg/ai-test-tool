@@ -177,6 +177,32 @@ class Tool:
 {params_desc if params_desc else "    无参数"}
   返回: {self.return_type}"""
 
+    def to_openai_function(self) -> dict[str, Any]:
+        """
+        转换为 OpenAI Function Calling 格式 (JSON Schema)
+
+        Returns:
+            OpenAI function calling 兼容的 schema
+        """
+        properties = {}
+        for param_name, param_schema in self.parameters.items():
+            prop: dict[str, Any] = {"type": param_schema.get("type", "string")}
+            if "description" in param_schema:
+                prop["description"] = param_schema["description"]
+            if "enum" in param_schema:
+                prop["enum"] = param_schema["enum"]
+            properties[param_name] = prop
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": self.required_params,
+            },
+        }
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -190,7 +216,11 @@ class Tool:
 
 @dataclass
 class ToolResult:
-    """工具执行结果"""
+    """
+    工具执行结果
+
+    标准化格式: {success, data, error, metadata}
+    """
     tool_name: str
     success: bool
     output: Any = None
@@ -214,6 +244,23 @@ class ToolResult:
             execution_time_ms=self.execution_time_ms,
             metadata=self.metadata
         )
+
+    def to_standard_dict(self) -> dict[str, Any]:
+        """
+        转换为标准化格式
+
+        统一的 {success, data, error, metadata} 结构
+        """
+        return {
+            "success": self.success,
+            "data": self.output,
+            "error": self.error if not self.success else None,
+            "metadata": {
+                "tool_name": self.tool_name,
+                "execution_time_ms": self.execution_time_ms,
+                **self.metadata,
+            },
+        }
 
 
 @dataclass
@@ -363,6 +410,9 @@ class AgentContext:
 
     # 工作记忆（用于跨步骤记录信息）
     working_memory: dict[str, Any] = field(default_factory=dict)
+
+    # Token 使用统计
+    token_usage: dict[str, int] = field(default_factory=dict)
 
     # 配置
     config: ReActConfig = field(default_factory=ReActConfig)

@@ -32,7 +32,7 @@ def analyze_logs_react(context: dict[str, Any]) -> dict[str, Any]:
     3. 提取哪些模式
     4. 如何关联分析
     """
-    from ..react import LogAnalysisAgent
+    from ...react import LogAnalysisAgent
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])
@@ -95,7 +95,7 @@ def debug_performance_react(context: dict[str, Any]) -> dict[str, Any]:
     3. 检测性能异常
     4. 定位瓶颈
     """
-    from ..react import PerformanceDebugAgent
+    from ...react import PerformanceDebugAgent
 
     requests = context.get("requests", [])
     log_content = context.get("log_content", "")
@@ -152,7 +152,7 @@ def investigate_security_react(context: dict[str, Any]) -> dict[str, Any]:
     3. 追踪安全事件
     4. 评估风险
     """
-    from ..react import SecurityInvestigationAgent
+    from ...react import SecurityInvestigationAgent
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])
@@ -210,7 +210,7 @@ def hunt_anomalies_react(context: dict[str, Any]) -> dict[str, Any]:
     3. 关联分析事件
     4. 发现隐藏问题
     """
-    from ..react import AnomalyHuntingAgent
+    from ...react import AnomalyHuntingAgent
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])

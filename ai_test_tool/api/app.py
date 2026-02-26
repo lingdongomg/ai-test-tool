@@ -22,7 +22,7 @@ from ..exceptions import (
     ExternalServiceError,
     get_http_status
 )
-from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge
+from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge, analysis
 
 
 def setup_logging() -> logging.Logger:
@@ -188,6 +188,8 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router, prefix="/api/v2/tasks", tags=["分析任务"])
     # 知识库管理
     app.include_router(knowledge.router, prefix="/api/v2/knowledge", tags=["知识库"])
+    # 场景四：智能分析（路由分发）
+    app.include_router(analysis.router, prefix="/api/v2/analysis", tags=["智能分析"])
 
     @app.get("/", tags=["健康检查"])
     async def root():

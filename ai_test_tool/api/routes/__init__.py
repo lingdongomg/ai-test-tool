@@ -160,7 +160,7 @@ def build_conditions(
         if key.endswith("_search"):
             # 模糊搜索 - 使用安全的 LIKE 参数构建
             base_field = field_mapping.get(key, key.replace("_search", ""))
-            conditions.append(f"({base_field} LIKE %s ESCAPE '\\\\')")
+            conditions.append(f"({base_field} LIKE %s ESCAPE '\\')")
             params.append(build_safe_like(str(value)))
         elif isinstance(value, bool):
             conditions.append(f"{field} = %s")
@@ -181,6 +181,7 @@ from . import ai_assistant
 from . import imports
 from . import tasks
 from . import knowledge
+from . import analysis
 
 # 任务取消检查函数
 from .tasks import is_task_cancelled
@@ -194,6 +195,7 @@ __all__ = [
     "imports",
     "tasks",
     "knowledge",
+    "analysis",
     "is_task_cancelled",
     # 工具函数
     "paginate",

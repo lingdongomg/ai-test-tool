@@ -32,7 +32,7 @@ def analyze_causal_root_cause(context: dict[str, Any]) -> dict[str, Any]:
     3. 分析因果链
     4. 使用LLM增强推理
     """
-    from ..causal import RootCauseAnalyzer
+    from ...causal import RootCauseAnalyzer
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])
@@ -78,7 +78,7 @@ def assess_causal_impact(context: dict[str, Any]) -> dict[str, Any]:
 
     基于因果图分析故障传播和影响范围
     """
-    from ..causal import ImpactAnalyzer
+    from ...causal import ImpactAnalyzer
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])
@@ -134,7 +134,7 @@ def trace_causal_propagation(context: dict[str, Any]) -> dict[str, Any]:
 
     分析故障如何从源头传播到各个组件
     """
-    from ..causal import PropagationAnalyzer
+    from ...causal import PropagationAnalyzer
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])
@@ -188,7 +188,7 @@ def analyze_causal_full(context: dict[str, Any]) -> dict[str, Any]:
 
     综合运用因果图构建、根因定位、影响评估和传播分析
     """
-    from ..causal import CausalAnalyzer
+    from ...causal import CausalAnalyzer
 
     log_content = context.get("log_content", "")
     requests = context.get("requests", [])

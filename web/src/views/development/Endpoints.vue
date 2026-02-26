@@ -107,6 +107,9 @@
         <template #path="{ row }">
           <div class="path-cell">
             <span class="path-text">{{ row.path }}</span>
+            <t-tag v-if="hasParamDefinition(row)" size="small" theme="primary" variant="outline" style="margin-left: 6px;">
+              有参数
+            </t-tag>
             <span class="path-desc" v-if="row.description">{{ row.description }}</span>
           </div>
         </template>
@@ -404,6 +407,21 @@ const confirmGenerate = async () => {
 const closeTaskDialog = () => {
   taskDialogVisible.value = false
   currentTask.value = null
+}
+
+// 判断接口是否有参数定义
+const hasParamDefinition = (row: any): boolean => {
+  const parseField = (val: any) => {
+    if (!val) return null
+    if (typeof val === 'string') {
+      try { return JSON.parse(val) } catch { return null }
+    }
+    return val
+  }
+  const params = parseField(row.parameters)
+  const body = parseField(row.request_body)
+  return (Array.isArray(params) && params.length > 0) ||
+    (body && typeof body === 'object' && Object.keys(body).length > 0)
 }
 
 // 获取方法主题

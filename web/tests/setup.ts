@@ -30,6 +30,15 @@ config.global.stubs = {
   't-slider': true,
   't-link': true,
   't-option': true,
+  't-space': true,
+  't-switch': true,
+  't-loading': true,
+  't-descriptions': true,
+  't-descriptions-item': true,
+  't-divider': true,
+  't-drawer': true,
+  't-checkbox': true,
+  't-checkbox-group': true,
   // 模拟图标
   'search-icon': true,
   'refresh-icon': true,
@@ -37,6 +46,10 @@ config.global.stubs = {
   'error-circle-icon': true,
   'arrow-left-icon': true,
   'chat-icon': true,
+  'file-import-icon': true,
+  'play-icon': true,
+  'check-circle-filled-icon': true,
+  'close-circle-filled-icon': true,
 }
 
 // 模拟全局方法

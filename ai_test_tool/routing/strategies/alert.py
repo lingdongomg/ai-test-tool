@@ -32,7 +32,7 @@ def filter_alerts_basic(context: dict[str, Any]) -> dict[str, Any]:
     3. 告警抑制
     4. 降噪处理
     """
-    from ..alerting import AlertFilter, Alert, AlertSeverity
+    from ...alerting import AlertFilter, Alert, AlertSeverity
 
     requests = context.get("requests", [])
     log_content = context.get("log_content", "")
@@ -49,7 +49,7 @@ def filter_alerts_basic(context: dict[str, Any]) -> dict[str, Any]:
             if status >= 500:
                 severity = AlertSeverity.HIGH
             elif status == 401 or status == 403:
-                severity = AlertSeverity.MEDIUM
+                severity = AlertSeverity.WARNING
             else:
                 severity = AlertSeverity.WARNING
 
@@ -71,7 +71,7 @@ def filter_alerts_basic(context: dict[str, Any]) -> dict[str, Any]:
         (r"(?i)error[:\s]+(.+?)(?:\n|$)", AlertSeverity.HIGH),
         (r"(?i)exception[:\s]+(.+?)(?:\n|$)", AlertSeverity.HIGH),
         (r"(?i)warning[:\s]+(.+?)(?:\n|$)", AlertSeverity.WARNING),
-        (r"(?i)failed[:\s]+(.+?)(?:\n|$)", AlertSeverity.MEDIUM),
+        (r"(?i)failed[:\s]+(.+?)(?:\n|$)", AlertSeverity.WARNING),
     ]
 
     for pattern, severity in error_patterns:
@@ -170,7 +170,7 @@ def process_alerts_with_rules(context: dict[str, Any]) -> dict[str, Any]:
     3. 升级规则
     4. 路由规则
     """
-    from ..alerting import (
+    from ...alerting import (
         AlertRuleEngine,
         Alert,
         AlertSeverity,

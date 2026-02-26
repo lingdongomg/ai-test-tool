@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import Any
 
@@ -25,8 +26,18 @@ from .models import (
 )
 from .tools import ToolRegistry, get_tool_registry
 from ..llm.provider import LLMProvider, get_llm_provider
+from ..context.message_builder import MessageBuilder
+from ..context.context_window import ContextWindow
+from ..context.token_counter import TokenCounter
+from ..reflection.engine import ReflectionEngine
+from ..reflection.models import ReflectionConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _sse_event(event: str, data: dict[str, Any]) -> dict[str, Any]:
+    """构建 SSE 事件"""
+    return {"event": event, "data": data}
 
 
 # ReAct Prompt模板
@@ -53,7 +64,7 @@ Action Input: [工具参数，JSON格式]
 ```
 Thought: [总结分析过程和得出的结论]
 Action: finish
-Action Input: {"answer": "你的最终答案"}
+Action Input: {{"answer": "你的最终答案"}}
 ```
 
 ## 重要规则
@@ -95,7 +106,9 @@ class ReActEngine:
         self,
         llm_provider: LLMProvider | None = None,
         tool_registry: ToolRegistry | None = None,
-        config: ReActConfig | None = None
+        config: ReActConfig | None = None,
+        use_messages: bool = True,
+        reflection_config: ReflectionConfig | None = None,
     ):
         """
         初始化引擎
@@ -104,13 +117,25 @@ class ReActEngine:
             llm_provider: LLM提供者
             tool_registry: 工具注册表
             config: 配置
+            use_messages: 是否使用 Messages 模式（True=chat API，False=旧字符串拼接）
+            reflection_config: Reflection 配置（None=不启用反思）
         """
         self._llm_provider = llm_provider
         self._tool_registry = tool_registry
         self.config = config or ReActConfig()
+        self.use_messages = use_messages
+        self.reflection_config = reflection_config
 
         # 额外注册的工具
         self._extra_tools: list[Tool] = []
+
+        # Context Engineering 组件
+        self._token_counter = TokenCounter()
+        self._context_window = ContextWindow(
+            max_tokens=self.config.max_tokens,
+            reserved_for_output=2000,
+            token_counter=self._token_counter,
+        )
 
     @property
     def llm_provider(self) -> LLMProvider:
@@ -201,6 +226,11 @@ class ReActEngine:
                 if step.is_terminal:
                     result.final_answer = step.action.final_answer
                     result.stop_reason = StopReason.TASK_COMPLETED
+
+                    # 可选：对最终答案进行 Reflection
+                    if self.reflection_config and self.reflection_config.enabled and result.final_answer:
+                        result.final_answer = self._reflect_on_answer(result.final_answer, task)
+
                     logger.info("ReAct任务完成")
                     break
 
@@ -223,7 +253,100 @@ class ReActEngine:
         result.total_iterations = len(result.steps)
         result.total_execution_time_ms = (time.time() - start_time) * 1000
 
+        # Token 使用统计
+        result.total_tokens_used = context.token_usage.get("total_input_tokens", 0)
+
         return result
+
+    async def run_stream(
+        self,
+        task: str,
+        log_content: str = "",
+        requests: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        流式执行 ReAct 循环，每步完成即 yield SSE 事件
+
+        事件类型：
+        - step_start: 步骤开始
+        - thought: 思考内容
+        - action: 行动信息
+        - observation: 观察结果
+        - step_end: 步骤结束
+        - finished: 任务完成
+        - error: 错误
+
+        Yields:
+            SSE 事件字典 {"event": str, "data": dict}
+        """
+        import asyncio
+
+        start_time = time.time()
+        started_at = datetime.now()
+
+        context = AgentContext(
+            task=task,
+            task_context=kwargs,
+            log_content=log_content,
+            requests=requests or [],
+            config=self.config,
+        )
+
+        yield _sse_event("started", {"task": task, "max_iterations": self.config.max_iterations})
+
+        try:
+            iteration = 0
+            while iteration < self.config.max_iterations:
+                iteration += 1
+
+                elapsed = time.time() - start_time
+                if elapsed > self.config.total_timeout_seconds:
+                    yield _sse_event("finished", {"reason": "timeout", "iterations": iteration})
+                    return
+
+                yield _sse_event("step_start", {"step": iteration})
+
+                # 执行一步（在线程池中运行同步代码）
+                step = await asyncio.get_event_loop().run_in_executor(
+                    None, self._execute_step, context, iteration
+                )
+                context.add_step(step)
+
+                yield _sse_event("thought", {
+                    "step": iteration,
+                    "content": step.thought.content,
+                })
+
+                yield _sse_event("action", {
+                    "step": iteration,
+                    "type": step.action.action_type.value,
+                    "tool": step.action.tool_name,
+                    "input": step.action.tool_input,
+                })
+
+                if step.observation:
+                    yield _sse_event("observation", {
+                        "step": iteration,
+                        "content": step.observation.content[:2000],
+                        "is_error": step.observation.is_error,
+                    })
+
+                yield _sse_event("step_end", {"step": iteration})
+
+                if step.is_terminal:
+                    yield _sse_event("finished", {
+                        "reason": "completed",
+                        "answer": step.action.final_answer,
+                        "iterations": iteration,
+                        "elapsed_ms": (time.time() - start_time) * 1000,
+                    })
+                    return
+
+            yield _sse_event("finished", {"reason": "max_iterations", "iterations": iteration})
+
+        except Exception as e:
+            yield _sse_event("error", {"message": str(e)})
 
     def _execute_step(
         self,
@@ -231,9 +354,14 @@ class ReActEngine:
         step_number: int
     ) -> ReActStep:
         """执行单步ReAct"""
-        # 1. 生成prompt并调用LLM获取思考和行动
-        prompt = self._build_prompt(context)
-        llm_response = self._call_llm(prompt)
+        if self.use_messages:
+            # 新模式：使用 Messages 列表 + chat API
+            messages = self._build_messages(context)
+            llm_response = self._call_llm_chat(messages, context)
+        else:
+            # 旧模式：字符串拼接 + generate API（fallback）
+            prompt = self._build_prompt(context)
+            llm_response = self._call_llm(prompt)
 
         # 2. 解析LLM输出
         thought, action = self._parse_response(llm_response, step_number)
@@ -257,8 +385,74 @@ class ReActEngine:
             observation=observation
         )
 
+    def _build_messages(self, context: AgentContext) -> list[dict[str, str]]:
+        """
+        使用 MessageBuilder 构建 messages 列表
+
+        结构：
+        - system: ReAct 指令 + 工具描述
+        - user: 任务描述 + 数据概况
+        - 历史交互：assistant(thought+action) + user(observation) 交替
+        - user: 继续提示
+        """
+        tools_prompt = self.tool_registry.get_tools_prompt()
+        system_content = REACT_SYSTEM_PROMPT.format(tools_prompt=tools_prompt)
+
+        builder = MessageBuilder()
+        builder.system(system_content)
+
+        # 初始任务描述
+        task_content = (
+            f"## 任务\n{context.task}\n\n"
+            f"## 可用数据\n"
+            f"- 日志内容: {'有' if context.log_content else '无'}\n"
+            f"- 请求数据: {len(context.requests)} 条记录"
+        )
+        builder.user(task_content)
+
+        # 将历史步骤编码为多轮 assistant/user 消息
+        for step in context.steps:
+            # assistant 消息：思考 + 行动
+            assistant_content = f"Thought: {step.thought.content}\n"
+            assistant_content += f"Action: {step.action.tool_name}\n"
+            assistant_content += f"Action Input: {json.dumps(step.action.tool_input, ensure_ascii=False)}"
+            builder.assistant(assistant_content)
+
+            # user 消息：观察结果
+            if step.observation:
+                obs_content = step.observation.content
+                if self.config.compress_observations and len(obs_content) > self.config.max_observation_length:
+                    obs_content = obs_content[:self.config.max_observation_length] + "...(truncated)"
+                builder.user(f"Observation: {obs_content}")
+
+        # 上下文窗口管理：确保不超过 token 限制
+        self._context_window.fit_messages(builder)
+
+        # 添加继续提示
+        if context.steps:
+            builder.user("请继续分析，按照 Thought -> Action -> Action Input 的格式输出。")
+
+        return builder.build()
+
+    def _call_llm_chat(self, messages: list[dict[str, str]], context: AgentContext) -> str:
+        """使用 chat API 调用 LLM"""
+        # 记录 token 使用
+        input_tokens = self._token_counter.count_messages(messages)
+        context.token_usage["total_input_tokens"] = context.token_usage.get("total_input_tokens", 0) + input_tokens
+
+        for attempt in range(self.config.llm_retry_count):
+            try:
+                response = self.llm_provider.chat(messages)
+                return response
+            except Exception as e:
+                logger.warning(f"LLM chat调用失败 (尝试 {attempt + 1}): {e}")
+                if attempt == self.config.llm_retry_count - 1:
+                    raise
+
+        return ""
+
     def _build_prompt(self, context: AgentContext) -> str:
-        """构建LLM prompt"""
+        """构建LLM prompt（旧模式 fallback）"""
         # 获取工具描述
         tools_prompt = self.tool_registry.get_tools_prompt()
 
@@ -277,7 +471,7 @@ class ReActEngine:
         return f"{system_prompt}\n\n{user_prompt}"
 
     def _call_llm(self, prompt: str) -> str:
-        """调用LLM"""
+        """调用LLM（旧模式 fallback）"""
         for attempt in range(self.config.llm_retry_count):
             try:
                 response = self.llm_provider.generate(prompt)
@@ -364,6 +558,20 @@ class ReActEngine:
 
         return thought, action
 
+    def _reflect_on_answer(self, answer: str, task: str) -> str:
+        """对最终答案进行 Reflection"""
+        engine = ReflectionEngine(
+            llm_provider=self.llm_provider,
+            config=self.reflection_config,
+        )
+        refined = engine.reflect_and_refine(
+            output=answer,
+            task=task,
+        )
+        if refined.improved:
+            logger.info(f"Reflection 改进了答案 (轮数={refined.total_rounds})")
+        return refined.refined
+
     def _execute_action(
         self,
         action: Action,
@@ -416,6 +624,7 @@ class ReActEngine:
 def create_react_engine(
     config: ReActConfig | None = None,
     llm_provider: LLMProvider | None = None,
+    use_messages: bool = True,
     **config_kwargs: Any
 ) -> ReActEngine:
     """
@@ -424,6 +633,7 @@ def create_react_engine(
     Args:
         config: 配置对象
         llm_provider: LLM提供者
+        use_messages: 是否使用 Messages 模式
         **config_kwargs: 配置参数
 
     Returns:
@@ -434,5 +644,6 @@ def create_react_engine(
 
     return ReActEngine(
         llm_provider=llm_provider,
-        config=config
+        config=config,
+        use_messages=use_messages,
     )

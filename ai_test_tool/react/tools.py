@@ -7,6 +7,7 @@
 import json
 import logging
 import re
+import subprocess
 import time
 from collections import defaultdict
 from functools import wraps
@@ -108,11 +109,22 @@ class ToolRegistry:
             # 执行工具
             result = tool.func(**kwargs)
 
+            elapsed = (time.time() - start_time) * 1000
+
+            # 检查超时
+            if elapsed > tool.timeout_seconds * 1000:
+                return ToolResult(
+                    tool_name=tool_name,
+                    success=False,
+                    error=f"工具执行超时 ({tool.timeout_seconds}s)",
+                    execution_time_ms=elapsed,
+                )
+
             return ToolResult(
                 tool_name=tool_name,
                 success=True,
                 output=result,
-                execution_time_ms=(time.time() - start_time) * 1000
+                execution_time_ms=elapsed
             )
 
         except Exception as e:
@@ -139,6 +151,18 @@ class ToolRegistry:
             lines.append("")
 
         return "\n".join(lines)
+
+    def get_openai_tools(self) -> list[dict[str, Any]]:
+        """
+        获取 OpenAI Function Calling 格式的工具列表
+
+        Returns:
+            OpenAI tools 格式列表
+        """
+        return [
+            {"type": "function", "function": tool.to_openai_function()}
+            for tool in self._tools.values()
+        ]
 
     @property
     def size(self) -> int:
@@ -737,6 +761,106 @@ class CompareTimePeriodsTool:
             analysis.append("两个时间段的指标相近，无明显变化")
 
         return analysis
+
+
+class PythonExecTool:
+    """
+    Python 代码执行工具（沙箱模式）
+
+    默认禁用，需显式注册启用
+    """
+
+    @staticmethod
+    def create(timeout: int = 30) -> Tool:
+        return Tool(
+            name="python_exec",
+            description="在沙箱中执行 Python 代码并返回输出（默认禁用，需显式启用）",
+            func=PythonExecTool.execute,
+            parameters={
+                "code": {
+                    "type": "string",
+                    "description": "要执行的 Python 代码"
+                }
+            },
+            required_params=["code"],
+            return_type="代码执行的标准输出",
+            tags=["code", "execution"],
+            timeout_seconds=timeout,
+        )
+
+    @staticmethod
+    def execute(code: str, **kwargs: Any) -> str:
+        """在 subprocess 沙箱中执行 Python 代码"""
+        try:
+            result = subprocess.run(
+                ["python", "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={"PATH": "/usr/bin:/usr/local/bin"},
+            )
+
+            output_parts = []
+            if result.stdout:
+                output_parts.append(result.stdout.strip())
+            if result.stderr:
+                output_parts.append(f"[stderr] {result.stderr.strip()}")
+
+            if result.returncode != 0:
+                return json.dumps({
+                    "success": False,
+                    "error": f"退出码: {result.returncode}",
+                    "output": "\n".join(output_parts),
+                }, ensure_ascii=False)
+
+            return json.dumps({
+                "success": True,
+                "output": "\n".join(output_parts) or "(无输出)",
+            }, ensure_ascii=False)
+
+        except subprocess.TimeoutExpired:
+            return json.dumps({"success": False, "error": "执行超时"})
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+
+class WebSearchTool:
+    """
+    网络搜索工具（桩实现）
+
+    实际对接需要配置搜索 API
+    """
+
+    @staticmethod
+    def create() -> Tool:
+        return Tool(
+            name="web_search",
+            description="搜索网络获取信息（需要配置搜索 API）",
+            func=WebSearchTool.execute,
+            parameters={
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "最大结果数，默认5"
+                }
+            },
+            required_params=["query"],
+            return_type="搜索结果列表（JSON格式）",
+            tags=["search", "web"],
+            timeout_seconds=15,
+        )
+
+    @staticmethod
+    def execute(query: str, max_results: int = 5, **kwargs: Any) -> str:
+        """执行网络搜索（桩实现）"""
+        return json.dumps({
+            "query": query,
+            "results": [],
+            "message": "网络搜索功能需要配置搜索 API（如 SerpAPI、Tavily 等）",
+        }, ensure_ascii=False)
 
 
 def register_builtin_tools() -> None:

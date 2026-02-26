@@ -101,12 +101,23 @@ class PostmanParser:
         
         # 解析请求头
         headers = self._parse_headers(request.get('header', []))
-        
+
         # 解析请求体
         request_body = self._parse_body(request.get('body', {}))
-        
-        # 解析参数
+
+        # 解析参数（路径参数 + 查询参数）
         parameters = self._build_parameters(url_data, query_params)
+
+        # 将请求头合并为 in: header 类型参数
+        for header_name, header_value in headers.items():
+            parameters.append({
+                'name': header_name,
+                'in': 'header',
+                'required': False,
+                'type': 'string',
+                'description': header_value,
+                'schema': {'type': 'string'}
+            })
         
         # 使用文件夹作为标签
         tags = [folder] if folder else []

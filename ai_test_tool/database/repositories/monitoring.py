@@ -424,7 +424,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
 
         if tag:
             # SQLite JSON 查询
-            conditions.append("tags LIKE %s ESCAPE '\\\\'")
+            conditions.append("tags LIKE %s ESCAPE '\\'")
             params.append(f'%"{tag}"%')
 
         if last_status:
@@ -432,7 +432,7 @@ class ProductionRequestRepository(BaseRepository[ProductionRequest]):
             params.append(last_status)
 
         if search:
-            conditions.append("url LIKE %s ESCAPE '\\\\'")
+            conditions.append("url LIKE %s ESCAPE '\\'")
             params.append(build_safe_like(search))
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""

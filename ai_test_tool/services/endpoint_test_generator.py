@@ -185,6 +185,11 @@ class EndpointTestGeneratorService:
         # 去重
         test_cases = self._deduplicate_cases(test_cases)
         
+        self.logger.info(
+            f"共生成 {len(test_cases)} 个用例"
+            f"（规则: {len(rule_based_cases)}, AI: {len(test_cases) - len(rule_based_cases)}）"
+        )
+        
         return test_cases
     
     def _generate_rule_based_cases(
@@ -280,9 +285,9 @@ class EndpointTestGeneratorService:
         # 分析参数的边界值
         all_params = list(parameters)
         
-        # 从 request_body 提取参数
+        # 从 request_body 提取参数（兼容 Swagger 2.0 和 OpenAPI 3.0）
         if request_body:
-            schema = request_body.get('content', {}).get('application/json', {}).get('schema', {})
+            schema = self._extract_body_schema(request_body)
             properties = schema.get('properties', {})
             for name, prop in properties.items():
                 all_params.append({
@@ -547,27 +552,33 @@ class EndpointTestGeneratorService:
             "responses": endpoint.get('responses', {})
         }
         
+        # 查询历史请求样例，为AI提供真实请求参考
+        sample_requests = self._get_sample_requests(endpoint)
+        
         # 调用 LLM 生成
         result = self.llm_chain.generate_test_cases(
             api_info=api_info,
-            sample_requests=[],
+            sample_requests=sample_requests,
             test_strategy="comprehensive"
         )
         
         cases: list[GeneratedTestCase] = []
         for tc_data in result.get("test_cases", []):
             try:
+                # 兼容两种格式：字段在顶层 或 嵌套在 request/expected 子对象中
+                req = tc_data.get("request", {})
+                exp = tc_data.get("expected", {})
                 case = GeneratedTestCase(
                     name=tc_data.get("name", "AI生成用例"),
                     description=tc_data.get("description", ""),
                     category=tc_data.get("category", "normal"),
                     priority=tc_data.get("priority", "medium"),
-                    method=tc_data.get("request", {}).get("method", endpoint['method']),
-                    url=tc_data.get("request", {}).get("url", endpoint['path']),
-                    headers=tc_data.get("request", {}).get("headers", {}),
-                    body=tc_data.get("request", {}).get("body"),
-                    query_params=tc_data.get("request", {}).get("query_params", {}),
-                    expected_status_code=tc_data.get("expected", {}).get("status_code", 200),
+                    method=tc_data.get("method", req.get("method", endpoint['method'])),
+                    url=tc_data.get("url", req.get("url", endpoint['path'])),
+                    headers=tc_data.get("headers", req.get("headers", {})),
+                    body=tc_data.get("body", req.get("body")),
+                    query_params=tc_data.get("query_params", req.get("query_params", {})),
+                    expected_status_code=tc_data.get("expected_status", exp.get("status_code", 200)),
                     assertions=tc_data.get("assertions", []),
                     tags=["ai-generated"] + tc_data.get("tags", [])
                 )
@@ -575,9 +586,50 @@ class EndpointTestGeneratorService:
             except Exception:
                 continue
         
-        self.logger.ai_end(f"生成 {len(cases)} 个用例")
+        self.logger.ai_end(f"AI 生成 {len(cases)} 个用例")
         return cases[:5]  # 限制 AI 生成数量
     
+    def _get_sample_requests(self, endpoint: dict[str, Any]) -> list[dict[str, Any]]:
+        """从 parsed_requests 表中查找与该接口匹配的历史请求样例"""
+        try:
+            path = endpoint.get('path', '')
+            method = endpoint.get('method', '')
+            if not path or not method:
+                return []
+            
+            # 使用 LIKE 匹配 URL 中包含该路径的请求记录
+            rows = self.db.fetch_all(
+                "SELECT method, url, headers, body, query_params, http_status "
+                "FROM parsed_requests WHERE method = %s AND url LIKE %s "
+                "ORDER BY id DESC LIMIT 5",
+                (method, f"%{path}%")
+            )
+            if not rows:
+                return []
+            
+            samples = []
+            for row in rows:
+                sample: dict[str, Any] = {
+                    "method": row["method"],
+                    "url": row["url"],
+                }
+                # 解析 JSON 字段
+                for field in ("headers", "body", "query_params"):
+                    val = row.get(field)
+                    if val and isinstance(val, str):
+                        try:
+                            sample[field] = json.loads(val)
+                        except (json.JSONDecodeError, ValueError):
+                            sample[field] = val
+                    elif val:
+                        sample[field] = val
+                if row.get("http_status"):
+                    sample["status_code"] = row["http_status"]
+                samples.append(sample)
+            return samples
+        except Exception:
+            return []
+
     def _generate_sample_value(self, param: dict) -> str:
         """根据参数定义生成示例值"""
         schema = param.get('schema', param)
@@ -611,23 +663,43 @@ class EndpointTestGeneratorService:
         else:
             return "test_value"
     
+    def _extract_body_schema(self, request_body: dict) -> dict[str, Any]:
+        """
+        从 request_body 中提取 schema，兼容 Swagger 2.0 和 OpenAPI 3.0 格式
+
+        OpenAPI 3.0: {"content": {"application/json": {"schema": {...}}}}
+        Swagger 2.0: {"schema": {...}}
+        """
+        # OpenAPI 3.0 格式
+        content = request_body.get('content', {})
+        if content:
+            json_content = content.get('application/json', {})
+            schema = json_content.get('schema', {})
+            if schema:
+                return schema
+
+        # Swagger 2.0 格式 (body 参数直接包含 schema)
+        schema = request_body.get('schema', {})
+        if schema:
+            return schema
+
+        return {}
+
     def _generate_request_body(self, request_body: dict) -> dict[str, Any]:
         """根据 request_body 定义生成请求体"""
-        content = request_body.get('content', {})
-        json_content = content.get('application/json', {})
-        schema = json_content.get('schema', {})
-        
+        schema = self._extract_body_schema(request_body)
+
         if schema.get('example'):
             return schema['example']
-        
+
         properties = schema.get('properties', {})
         body: dict[str, Any] = {}
-        
+
         for name, prop in properties.items():
             prop_type = prop.get('type', 'string')
             example = prop.get('example')
             default = prop.get('default')
-            
+
             if example is not None:
                 body[name] = example
             elif default is not None:
@@ -644,7 +716,7 @@ class EndpointTestGeneratorService:
                 body[name] = []
             elif prop_type == 'object':
                 body[name] = {}
-        
+
         return body
     
     def _deduplicate_cases(self, cases: list[GeneratedTestCase]) -> list[GeneratedTestCase]:
@@ -724,17 +796,16 @@ class EndpointTestGeneratorService:
             if existing:
                 continue
             
-            # 注意：test_cases 表没有 endpoint_id 列，使用 task_id 存储 endpoint_id
             sql = """
                 INSERT INTO test_cases 
-                (case_id, task_id, name, description, category, priority,
+                (case_id, endpoint_id, name, description, category, priority,
                  method, url, headers, body, query_params, expected_status_code,
                  expected_response, max_response_time_ms, tags, is_enabled)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             self.db.execute(sql, (
                 case_id,
-                endpoint_id,  # 使用 task_id 字段存储 endpoint_id
+                endpoint_id,
                 case.name[:255],
                 case.description[:16000] if case.description else "",
                 case.category,

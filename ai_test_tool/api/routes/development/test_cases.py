@@ -164,6 +164,14 @@ async def get_generate_task_status(
         except (json.JSONDecodeError, ValueError):
             pass
 
+    # 将 metadata 中的统计字段展开到顶层，供前端直接访问
+    metadata_val = result.get('metadata')
+    if isinstance(metadata_val, dict):
+        result.setdefault('success_count', metadata_val.get('success_count', 0))
+        result.setdefault('failed_count', metadata_val.get('failed_count', 0))
+    # 统一字段名：数据库列为 total_test_cases，前端期望 total_cases_generated
+    result['total_cases_generated'] = result.get('total_test_cases', 0)
+
     return result
 
 
@@ -285,7 +293,7 @@ async def list_test_cases(
 
     if endpoint_id:
         # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配
-        conditions.append("tc.case_id LIKE %s ESCAPE '\\\\'")
+        conditions.append("tc.case_id LIKE %s ESCAPE '\\'")
         params.append(build_safe_like(endpoint_id, "end"))
 
     if category:
@@ -302,7 +310,7 @@ async def list_test_cases(
 
     if search:
         safe_search = build_safe_like(search)
-        conditions.append("(tc.name LIKE %s ESCAPE '\\\\' OR tc.description LIKE %s ESCAPE '\\\\')")
+        conditions.append("(tc.name LIKE %s ESCAPE '\\' OR tc.description LIKE %s ESCAPE '\\')")
         params.extend([safe_search, safe_search])
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -443,6 +451,8 @@ async def update_test_case(
 
     # 返回更新后的数据
     updated = db.fetch_one("SELECT * FROM test_cases WHERE case_id = %s", (test_case_id,))
+    if not updated:
+        raise HTTPException(status_code=404, detail="更新后查询失败")
     return {
         "success": True,
         "message": "测试用例更新成功",
@@ -516,6 +526,8 @@ async def copy_test_case(
 
     # 返回新用例
     new_case = db.fetch_one("SELECT * FROM test_cases WHERE case_id = %s", (new_case_id,))
+    if not new_case:
+        raise HTTPException(status_code=404, detail="复制后查询失败")
 
     return {
         "success": True,

@@ -35,6 +35,57 @@
       </t-descriptions>
     </t-card>
 
+    <!-- 接口定义（参数、请求体、响应） -->
+    <t-card title="接口定义" style="margin-top: 16px;" v-if="hasApiDefinition">
+      <t-collapse :default-value="activeDefinitionPanels">
+        <!-- 请求参数 -->
+        <t-collapse-panel value="parameters" v-if="parsedParameters.length">
+          <template #header>
+            请求参数 (Parameters)
+            <t-tag size="small" variant="light" style="margin-left: 8px;">{{ parsedParameters.length }}</t-tag>
+          </template>
+          <t-table
+            :data="parsedParameters"
+            :columns="paramColumns"
+            size="small"
+            hover
+            row-key="name"
+            :bordered="true"
+          />
+        </t-collapse-panel>
+
+        <!-- 请求体 -->
+        <t-collapse-panel value="request_body" v-if="hasRequestBody">
+          <template #header>
+            请求体 (Request Body)
+            <t-tag size="small" theme="primary" variant="light" style="margin-left: 8px;">
+              {{ requestBodyRequired ? '必填' : '可选' }}
+            </t-tag>
+          </template>
+          <div v-if="requestBodyDescription" class="body-description">{{ requestBodyDescription }}</div>
+          <pre class="code-block">{{ formatJson(requestBodySchema) }}</pre>
+        </t-collapse-panel>
+
+        <!-- 响应定义 -->
+        <t-collapse-panel value="responses" v-if="hasResponses">
+          <template #header>
+            响应定义 (Responses)
+            <t-tag size="small" variant="light" style="margin-left: 8px;">{{ Object.keys(parsedResponses).length }} 个状态码</t-tag>
+          </template>
+          <div v-for="(resp, statusCode) in parsedResponses" :key="statusCode" class="response-item">
+            <div class="response-header">
+              <t-tag :theme="getStatusCodeTheme(String(statusCode))" size="small">{{ statusCode }}</t-tag>
+              <span class="response-desc">{{ resp.description || '' }}</span>
+            </div>
+            <pre class="code-block" v-if="resp.schema || resp.content">{{ formatJson(resp.schema || resp.content) }}</pre>
+          </div>
+        </t-collapse-panel>
+      </t-collapse>
+    </t-card>
+    <t-card style="margin-top: 16px;" v-else-if="!loading">
+      <t-empty description="暂无接口参数定义，请导入包含参数的接口文档" size="small" />
+    </t-card>
+
     <!-- 测试用例列表 -->
     <t-card title="测试用例" style="margin-top: 16px;">
       <template #actions>
@@ -263,7 +314,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { AddIcon, PlayIcon } from 'tdesign-icons-vue-next'
@@ -280,6 +331,74 @@ const tags = ref<any[]>([])
 const recentExecutions = ref<any[]>([])
 const statistics = ref<any>({})
 const casesLoading = ref(false)
+
+// 接口定义相关计算属性
+const parseJsonField = (val: any): any => {
+  if (!val) return null
+  if (typeof val === 'string') {
+    try { return JSON.parse(val) } catch { return null }
+  }
+  return val
+}
+
+const parsedParameters = computed(() => {
+  const params = parseJsonField(endpoint.value?.parameters)
+  if (!Array.isArray(params)) return []
+  return params.map((p: any) => ({
+    name: p.name || '',
+    in: p.in || '',
+    type: p.type || p.schema?.type || '',
+    required: p.required ? '是' : '否',
+    description: p.description || ''
+  }))
+})
+
+const parsedRequestBody = computed(() => parseJsonField(endpoint.value?.request_body) || {})
+const hasRequestBody = computed(() => {
+  const rb = parsedRequestBody.value
+  return rb && (rb.schema || rb.content) && Object.keys(rb).length > 0
+})
+const requestBodyRequired = computed(() => parsedRequestBody.value?.required === true)
+const requestBodyDescription = computed(() => parsedRequestBody.value?.description || '')
+const requestBodySchema = computed(() => {
+  const rb = parsedRequestBody.value
+  // OpenAPI 3.0: content.application/json.schema
+  const oa3Schema = rb?.content?.['application/json']?.schema
+  if (oa3Schema) return oa3Schema
+  // Swagger 2.0: schema
+  if (rb?.schema) return rb.schema
+  return rb?.content || {}
+})
+
+const parsedResponses = computed(() => parseJsonField(endpoint.value?.responses) || {})
+const hasResponses = computed(() => Object.keys(parsedResponses.value).length > 0)
+
+const hasApiDefinition = computed(() =>
+  parsedParameters.value.length > 0 || hasRequestBody.value || hasResponses.value
+)
+
+const activeDefinitionPanels = computed(() => {
+  const panels: string[] = []
+  if (parsedParameters.value.length) panels.push('parameters')
+  if (hasRequestBody.value) panels.push('request_body')
+  return panels
+})
+
+const paramColumns = [
+  { colKey: 'name', title: '参数名', width: 160 },
+  { colKey: 'in', title: '位置', width: 80 },
+  { colKey: 'type', title: '类型', width: 100 },
+  { colKey: 'required', title: '必填', width: 60 },
+  { colKey: 'description', title: '描述', ellipsis: true }
+]
+
+const getStatusCodeTheme = (code: string) => {
+  if (code.startsWith('2')) return 'success'
+  if (code.startsWith('3')) return 'warning'
+  if (code.startsWith('4')) return 'danger'
+  if (code.startsWith('5')) return 'danger'
+  return 'default'
+}
 
 // 执行测试
 const executeDialogVisible = ref(false)
@@ -596,5 +715,31 @@ const getStatusLabel = (status: string) => {
   max-height: 200px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.body-description {
+  color: #666;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.response-item {
+  margin-bottom: 12px;
+}
+
+.response-item:last-child {
+  margin-bottom: 0;
+}
+
+.response-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.response-desc {
+  color: #666;
+  font-size: 13px;
 }
 </style>
