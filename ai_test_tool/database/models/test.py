@@ -15,6 +15,19 @@ from .base import (
 
 
 @dataclass
+class TestFolder(BaseModel):
+    """测试用例文件夹模型"""
+    folder_id: str
+    name: str
+    parent_id: str | None = None
+    sort_order: int = 0
+    description: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    id: int | None = None
+
+
+@dataclass
 class TestCaseRecord(BaseModel):
     """测试用例记录模型"""
     case_id: str
@@ -36,6 +49,7 @@ class TestCaseRecord(BaseModel):
     is_enabled: bool = True
     is_ai_generated: bool = False
     source_task_id: str = ""
+    folder_id: str | None = None
     version: int = 1
     created_at: datetime | None = None
     updated_at: datetime | None = None

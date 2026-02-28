@@ -97,6 +97,7 @@ export const developmentApi = {
     priority?: string
     is_enabled?: boolean
     search?: string
+    folder_id?: string | null
     page?: number
     page_size?: number
   }) => api.get('/development/tests', { params }),
@@ -153,12 +154,49 @@ export const developmentApi = {
     page?: number
     page_size?: number
   }) => api.get('/development/executions', { params }),
+
+  getExecutionDetail: (executionId: string) =>
+    api.get(`/development/executions/${executionId}`),
   
   // 环境配置
   listEnvironments: () => api.get('/development/environments'),
   
   // 统计数据
-  getStatistics: () => api.get('/development/statistics')
+  getStatistics: () => api.get('/development/statistics'),
+
+  // ==================== 文件夹管理 ====================
+
+  // 获取文件夹树
+  listFolders: () => api.get('/development/folders'),
+
+  // 创建文件夹
+  createFolder: (data: {
+    name: string
+    parent_id?: string | null
+    description?: string
+  }) => api.post('/development/folders', data),
+
+  // 更新文件夹
+  updateFolder: (folderId: string, data: {
+    name?: string
+    parent_id?: string | null
+    sort_order?: number
+    description?: string
+  }) => api.put(`/development/folders/${folderId}`, data),
+
+  // 删除文件夹
+  deleteFolder: (folderId: string) =>
+    api.delete(`/development/folders/${folderId}`),
+
+  // 智能分组
+  autoOrganize: (preview: boolean = true) =>
+    api.post('/development/folders/auto-organize', null, { params: { preview } }),
+
+  // 批量移动用例
+  moveCases: (data: {
+    case_ids: string[]
+    folder_id: string | null
+  }) => api.put('/development/tests/move', data),
 }
 
 // ==================== 线上监控 API ====================

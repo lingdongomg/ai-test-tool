@@ -46,10 +46,20 @@ def _run_generate_task(task_id: str, request_data: dict):
                 use_ai=use_ai,
                 save_to_db=True
             )
+            metadata = {
+                'total_endpoints': 1,
+                'success_count': 1,
+                'failed_count': 0,
+                'errors': []
+            }
             task_repo.update_counts(
                 task_id,
                 total_requests=1,
                 total_test_cases=len(test_cases)
+            )
+            task_repo.db.execute(
+                "UPDATE analysis_tasks SET metadata = %s WHERE task_id = %s",
+                (json.dumps(metadata, ensure_ascii=False), task_id)
             )
             task_repo.update_status(task_id, TaskStatus.COMPLETED)
         else:
@@ -283,6 +293,7 @@ async def list_test_cases(
     priority: str | None = None,
     is_enabled: bool | None = None,
     search: str | None = None,
+    folder_id: str | None = Query(default=None, description="文件夹ID，'uncategorized'表示未分类"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: DatabaseManager = Depends(get_database)
@@ -290,6 +301,13 @@ async def list_test_cases(
     """获取测试用例列表"""
     conditions = []
     params: list[Any] = []
+
+    if folder_id:
+        if folder_id == 'uncategorized':
+            conditions.append("tc.folder_id IS NULL")
+        else:
+            conditions.append("tc.folder_id = %s")
+            params.append(folder_id)
 
     if endpoint_id:
         # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配

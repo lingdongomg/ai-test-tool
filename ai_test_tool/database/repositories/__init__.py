@@ -13,6 +13,7 @@ from .core import (
 )
 
 from .test import (
+    TestFolderRepository,
     TestCaseRepository,
     TestCaseHistoryRepository,
     TestResultRepository,
@@ -56,6 +57,7 @@ __all__ = [
     # Core
     'TaskRepository', 'RequestRepository', 'ReportRepository',
     # Test
+    'TestFolderRepository',
     'TestCaseRepository', 'TestCaseHistoryRepository',
     'TestResultRepository', 'TestExecutionRepository', 'ExecutionCaseRepository',
     # API

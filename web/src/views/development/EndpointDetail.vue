@@ -63,7 +63,16 @@
             </t-tag>
           </template>
           <div v-if="requestBodyDescription" class="body-description">{{ requestBodyDescription }}</div>
-          <pre class="code-block">{{ formatJson(requestBodySchema) }}</pre>
+          <t-table
+            v-if="requestBodyFields.length"
+            :data="requestBodyFields"
+            :columns="schemaFieldColumns"
+            size="small"
+            hover
+            row-key="name"
+            :bordered="true"
+          />
+          <pre class="code-block" v-else>{{ formatJson(requestBodySchema) }}</pre>
         </t-collapse-panel>
 
         <!-- 响应定义 -->
@@ -77,7 +86,16 @@
               <t-tag :theme="getStatusCodeTheme(String(statusCode))" size="small">{{ statusCode }}</t-tag>
               <span class="response-desc">{{ resp.description || '' }}</span>
             </div>
-            <pre class="code-block" v-if="resp.schema || resp.content">{{ formatJson(resp.schema || resp.content) }}</pre>
+            <t-table
+              v-if="getResponseFields(resp).length"
+              :data="getResponseFields(resp)"
+              :columns="schemaFieldColumns"
+              size="small"
+              hover
+              row-key="name"
+              :bordered="true"
+            />
+            <pre class="code-block" v-else-if="resp.schema || resp.content">{{ formatJson(resp.schema || resp.content) }}</pre>
           </div>
         </t-collapse-panel>
       </t-collapse>
@@ -113,7 +131,7 @@
         </template>
         <template #is_enabled="{ row }">
           <t-switch 
-            :value="row.is_enabled" 
+            :value="!!row.is_enabled" 
             size="small"
             @change="(val: boolean) => handleToggleCase(row, val)"
           />
@@ -206,13 +224,40 @@
         </t-descriptions>
         
         <t-divider>请求头</t-divider>
-        <pre class="code-block">{{ formatJson(currentCase.headers) }}</pre>
+        <t-table
+          v-if="parsedKvList(currentCase.headers).length"
+          :data="parsedKvList(currentCase.headers)"
+          :columns="kvColumns"
+          size="small"
+          hover
+          row-key="key"
+          :bordered="true"
+        />
+        <span v-else class="empty-hint">无</span>
         
         <t-divider>查询参数</t-divider>
-        <pre class="code-block">{{ formatJson(currentCase.query_params) }}</pre>
+        <t-table
+          v-if="parsedKvList(currentCase.query_params).length"
+          :data="parsedKvList(currentCase.query_params)"
+          :columns="kvColumns"
+          size="small"
+          hover
+          row-key="key"
+          :bordered="true"
+        />
+        <span v-else class="empty-hint">无</span>
         
         <t-divider>请求体</t-divider>
-        <pre class="code-block">{{ formatJson(currentCase.body) }}</pre>
+        <t-table
+          v-if="parsedKvList(currentCase.body).length"
+          :data="parsedKvList(currentCase.body)"
+          :columns="kvColumns"
+          size="small"
+          hover
+          row-key="key"
+          :bordered="true"
+        />
+        <span v-else class="empty-hint">无</span>
       </template>
     </t-drawer>
 
@@ -392,6 +437,94 @@ const paramColumns = [
   { colKey: 'description', title: '描述', ellipsis: true }
 ]
 
+const schemaFieldColumns = [
+  { colKey: 'name', title: '字段名', width: 180 },
+  { colKey: 'type', title: '类型', width: 120 },
+  { colKey: 'required', title: '必填', width: 60 },
+  { colKey: 'description', title: '描述/备注', ellipsis: true }
+]
+
+/** 从 JSON Schema 提取扁平字段列表 */
+const flattenSchemaFields = (schema: any, prefix = '', requiredList: string[] = []): any[] => {
+  if (!schema || typeof schema !== 'object') return []
+  const fields: any[] = []
+  const props = schema.properties || {}
+  const required = schema.required || requiredList
+
+  for (const [key, val] of Object.entries(props) as [string, any][]) {
+    const fieldName = prefix ? `${prefix}.${key}` : key
+    const fieldType = val.type || ''
+    let typeLabel = fieldType
+    if (fieldType === 'array' && val.items?.type) {
+      typeLabel = `array<${val.items.type}>`
+    }
+    if (val.enum) {
+      typeLabel += ` (${val.enum.join(' | ')})`
+    }
+    if (val.format) {
+      typeLabel += ` (${val.format})`
+    }
+
+    const descParts: string[] = []
+    if (val.description) descParts.push(val.description)
+    if (val.example !== undefined) descParts.push(`示例: ${JSON.stringify(val.example)}`)
+    if (val.default !== undefined) descParts.push(`默认: ${JSON.stringify(val.default)}`)
+    if (val.minimum !== undefined) descParts.push(`最小: ${val.minimum}`)
+    if (val.maximum !== undefined) descParts.push(`最大: ${val.maximum}`)
+    if (val.minLength !== undefined) descParts.push(`最短: ${val.minLength}`)
+    if (val.maxLength !== undefined) descParts.push(`最长: ${val.maxLength}`)
+
+    fields.push({
+      name: fieldName,
+      type: typeLabel,
+      required: required.includes(key) ? '是' : '否',
+      description: descParts.join('；') || '-'
+    })
+
+    // 递归展开 object 子属性
+    if (fieldType === 'object' && val.properties) {
+      fields.push(...flattenSchemaFields(val, fieldName, val.required || []))
+    }
+    // 递归展开 array items 的 object 属性
+    if (fieldType === 'array' && val.items?.properties) {
+      fields.push(...flattenSchemaFields(val.items, `${fieldName}[]`, val.items.required || []))
+    }
+  }
+  return fields
+}
+
+const requestBodyFields = computed(() => {
+  return flattenSchemaFields(requestBodySchema.value)
+})
+
+const getResponseFields = (resp: any): any[] => {
+  // OpenAPI 3.0: content.application/json.schema
+  const oa3Schema = resp?.content?.['application/json']?.schema
+  if (oa3Schema) return flattenSchemaFields(oa3Schema)
+  // Swagger 2.0: schema
+  if (resp?.schema) return flattenSchemaFields(resp.schema)
+  return []
+}
+
+const kvColumns = [
+  { colKey: 'key', title: 'Key', width: 200 },
+  { colKey: 'value', title: 'Value', ellipsis: true }
+]
+
+/** 将对象或 JSON 字符串转为 key-value 列表 */
+const parsedKvList = (obj: any): any[] => {
+  if (!obj) return []
+  let parsed = obj
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed) } catch { return [] }
+  }
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) return []
+  return Object.entries(parsed).map(([key, value]) => ({
+    key,
+    value: typeof value === 'object' ? JSON.stringify(value) : String(value)
+  }))
+}
+
 const getStatusCodeTheme = (code: string) => {
   if (code.startsWith('2')) return 'success'
   if (code.startsWith('3')) return 'warning'
@@ -510,7 +643,7 @@ const confirmExecute = async () => {
 const handleToggleCase = async (row: any, enabled: boolean) => {
   try {
     await developmentApi.updateTest(row.case_id, { is_enabled: enabled })
-    row.is_enabled = enabled ? 1 : 0
+    row.is_enabled = enabled
     MessagePlugin.success(enabled ? '已启用' : '已禁用')
   } catch (error) {
     console.error('切换状态失败:', error)
@@ -740,6 +873,11 @@ const getStatusLabel = (status: string) => {
 
 .response-desc {
   color: #666;
+  font-size: 13px;
+}
+
+.empty-hint {
+  color: rgba(0, 0, 0, 0.25);
   font-size: 13px;
 }
 </style>

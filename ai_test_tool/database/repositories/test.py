@@ -1,5 +1,5 @@
 """
-测试相关 Repository：用例、历史、结果、执行、执行关联
+测试相关 Repository：用例、历史、结果、执行、执行关联、文件夹
 """
 
 from datetime import datetime
@@ -7,11 +7,105 @@ from typing import Any
 
 from .base import BaseRepository
 from ..models import (
+    TestFolder,
     TestCaseRecord, TestCaseHistory, ChangeType,
     TestResultRecord,
     TestExecution, ExecutionStatus,
 )
 from ...utils.sql_security import validate_fields_for_update
+
+
+class TestFolderRepository(BaseRepository[TestFolder]):
+    """测试用例文件夹仓库"""
+
+    table_name = "test_folders"
+    model_class = TestFolder
+
+    def create(self, folder: TestFolder) -> int:
+        """创建文件夹"""
+        data = folder.to_dict()
+        sql = """
+            INSERT INTO test_folders
+            (folder_id, name, parent_id, sort_order, description)
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        params = (
+            data['folder_id'], data['name'], data['parent_id'],
+            data['sort_order'], data['description']
+        )
+        return self.db.execute(sql, params)
+
+    def get_by_id(self, folder_id: str) -> TestFolder | None:
+        """根据 folder_id 获取文件夹"""
+        return self._get_by_field("folder_id", folder_id)
+
+    def get_all_tree(self) -> list[dict[str, Any]]:
+        """获取所有文件夹（扁平列表，前端自行构建树）"""
+        sql = """
+            SELECT f.*,
+                   (SELECT COUNT(*) FROM test_cases tc WHERE tc.folder_id = f.folder_id) as case_count
+            FROM test_folders f
+            ORDER BY f.sort_order, f.created_at
+        """
+        return self.db.fetch_all(sql)
+
+    def update(self, folder_id: str, updates: dict[str, Any]) -> int:
+        """更新文件夹"""
+        if not updates:
+            return 0
+        updates['updated_at'] = datetime.now().isoformat()
+        validated_fields = validate_fields_for_update(updates.keys(), self.table_name)
+        set_clauses = [f"{key} = %s" for key in validated_fields]
+        params = [updates[key] for key in validated_fields] + [folder_id]
+        sql = f"UPDATE test_folders SET {', '.join(set_clauses)} WHERE folder_id = %s"
+        return self.db.execute(sql, tuple(params))
+
+    def delete(self, folder_id: str) -> int:
+        """删除文件夹（子用例 folder_id 由 ON DELETE SET NULL 自动处理）"""
+        # 先将子用例的 folder_id 置 NULL（SQLite 外键 SET NULL 需开启 PRAGMA）
+        self.db.execute(
+            "UPDATE test_cases SET folder_id = NULL WHERE folder_id = %s",
+            (folder_id,)
+        )
+        # 递归删除子文件夹下的用例也置 NULL
+        child_ids = self._get_descendant_ids(folder_id)
+        for cid in child_ids:
+            self.db.execute(
+                "UPDATE test_cases SET folder_id = NULL WHERE folder_id = %s",
+                (cid,)
+            )
+        # 删除文件夹（级联删除子文件夹）
+        return self.db.execute(
+            "DELETE FROM test_folders WHERE folder_id = %s", (folder_id,)
+        )
+
+    def _get_descendant_ids(self, folder_id: str) -> list[str]:
+        """递归获取所有子孙文件夹 ID"""
+        result = []
+        children = self.db.fetch_all(
+            "SELECT folder_id FROM test_folders WHERE parent_id = %s",
+            (folder_id,)
+        )
+        for child in children:
+            cid = child['folder_id']
+            result.append(cid)
+            result.extend(self._get_descendant_ids(cid))
+        return result
+
+    def get_depth(self, folder_id: str) -> int:
+        """获取文件夹的嵌套深度（顶级为 1）"""
+        depth = 0
+        current_id = folder_id
+        while current_id:
+            depth += 1
+            row = self.db.fetch_one(
+                "SELECT parent_id FROM test_folders WHERE folder_id = %s",
+                (current_id,)
+            )
+            if not row or not row['parent_id']:
+                break
+            current_id = row['parent_id']
+        return depth
 
 
 class TestCaseRepository(BaseRepository[TestCaseRecord]):

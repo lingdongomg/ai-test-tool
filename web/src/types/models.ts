@@ -100,6 +100,22 @@ export interface ApiTag {
 }
 
 // =====================================================
+// 测试用例文件夹
+// =====================================================
+
+export interface TestFolder {
+  id: number
+  folder_id: string
+  name: string
+  parent_id: string | null
+  sort_order: number
+  description: string | null
+  case_count: number
+  created_at: string
+  updated_at: string
+}
+
+// =====================================================
 // 测试用例相关
 // =====================================================
 
@@ -124,6 +140,7 @@ export interface TestCase {
   is_enabled: boolean
   is_ai_generated: boolean
   source_task_id: string | null
+  folder_id: string | null
   version: number
   created_at: string
   updated_at: string

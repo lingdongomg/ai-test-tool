@@ -11,6 +11,7 @@ from .repositories import (  # noqa: F401
     TaskRepository,
     RequestRepository,
     ReportRepository,
+    TestFolderRepository,
     TestCaseRepository,
     TestCaseHistoryRepository,
     TestResultRepository,

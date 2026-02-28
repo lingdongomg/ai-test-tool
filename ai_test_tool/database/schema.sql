@@ -119,6 +119,24 @@ CREATE TABLE IF NOT EXISTS api_endpoint_tags (
 CREATE INDEX IF NOT EXISTS idx_api_endpoint_tags_tag_id ON api_endpoint_tags(tag_id);
 
 -- =====================================================
+-- 测试用例文件夹表
+-- =====================================================
+
+-- 测试用例文件夹（支持层级嵌套，最多3层）
+CREATE TABLE IF NOT EXISTS test_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    parent_id TEXT,
+    sort_order INTEGER DEFAULT 0,
+    description TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (parent_id) REFERENCES test_folders(folder_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_test_folders_parent_id ON test_folders(parent_id);
+
+-- =====================================================
 -- 测试用例表
 -- =====================================================
 
@@ -144,14 +162,17 @@ CREATE TABLE IF NOT EXISTS test_cases (
     is_enabled INTEGER DEFAULT 1,
     is_ai_generated INTEGER DEFAULT 0,
     source_task_id TEXT,
+    folder_id TEXT,
     version INTEGER DEFAULT 1,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (folder_id) REFERENCES test_folders(folder_id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_test_cases_endpoint_id ON test_cases(endpoint_id);
 CREATE INDEX IF NOT EXISTS idx_test_cases_category ON test_cases(category);
 CREATE INDEX IF NOT EXISTS idx_test_cases_priority ON test_cases(priority);
 CREATE INDEX IF NOT EXISTS idx_test_cases_is_enabled ON test_cases(is_enabled);
+CREATE INDEX IF NOT EXISTS idx_test_cases_folder_id ON test_cases(folder_id);
 
 -- 测试用例历史表（合并版本和变更日志）
 CREATE TABLE IF NOT EXISTS test_case_history (

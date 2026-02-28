@@ -119,12 +119,40 @@ class DatabaseManager:
             return [dict(row) for row in rows] if rows else []
 
     def init_database(self) -> None:
-        """初始化数据库（创建表）"""
+        """初始化数据库（创建表 + 迁移）"""
         with self._lock:
             if self._initialized:
                 return
             self._create_tables()
+            self._run_migrations()
             self._initialized = True
+
+    def _run_migrations(self) -> None:
+        """执行数据库迁移（为已有数据库添加新列/表）"""
+        import logging
+        logger = logging.getLogger(__name__)
+        # 使用新的连接确保 executescript 不会影响游标状态
+        conn = sqlite3.connect(
+            self.config.db_path,
+            timeout=self.config.timeout,
+        )
+        try:
+            cursor = conn.cursor()
+            # 迁移: 添加 test_cases.folder_id 列（如果不存在）
+            cursor.execute("PRAGMA table_info(test_cases)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if 'folder_id' not in columns:
+                logger.info("Migration: adding folder_id column to test_cases")
+                cursor.execute("ALTER TABLE test_cases ADD COLUMN folder_id TEXT")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_test_cases_folder_id ON test_cases(folder_id)")
+                conn.commit()
+                logger.info("Migration: folder_id column added successfully")
+            cursor.close()
+        except Exception as e:
+            logger.error(f"Migration failed: {e}")
+            raise
+        finally:
+            conn.close()
 
     def _create_tables(self) -> None:
         """从 schema.sql 文件创建数据表"""
@@ -238,6 +266,20 @@ class DatabaseManager:
                 PRIMARY KEY (endpoint_id, tag_id)
             )
             """,
+            # 测试用例文件夹表
+            """
+            CREATE TABLE IF NOT EXISTS test_folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                parent_id TEXT,
+                sort_order INTEGER DEFAULT 0,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (parent_id) REFERENCES test_folders(folder_id) ON DELETE CASCADE
+            )
+            """,
             # 测试用例表
             """
             CREATE TABLE IF NOT EXISTS test_cases (
@@ -261,6 +303,7 @@ class DatabaseManager:
                 is_enabled INTEGER DEFAULT 1,
                 is_ai_generated INTEGER DEFAULT 0,
                 source_task_id TEXT,
+                folder_id TEXT,
                 version INTEGER DEFAULT 1,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP

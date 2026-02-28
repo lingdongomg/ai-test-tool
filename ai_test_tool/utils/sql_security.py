@@ -25,6 +25,7 @@ ALLOWED_TABLES: frozenset[str] = frozenset({
     "api_tags",
     "api_endpoints",
     "api_endpoint_tags",
+    "test_folders",
     "test_cases",
     "test_case_history",
     "test_executions",
@@ -75,12 +76,16 @@ TABLE_FIELDS: dict[str, frozenset[str]] = {
     "api_endpoint_tags": frozenset({
         "endpoint_id", "tag_id", "created_at"
     }),
+    "test_folders": frozenset({
+        "id", "folder_id", "name", "parent_id", "sort_order",
+        "description", "created_at", "updated_at"
+    }),
     "test_cases": frozenset({
         "id", "case_id", "endpoint_id", "name", "description", "category",
         "priority", "method", "url", "headers", "body", "query_params",
         "expected_status_code", "expected_response", "assertions",
         "max_response_time_ms", "tags", "is_enabled", "is_ai_generated",
-        "source_task_id", "version", "created_at", "updated_at"
+        "source_task_id", "folder_id", "version", "created_at", "updated_at"
     }),
     "test_case_history": frozenset({
         "id", "case_id", "version", "change_type", "change_summary",

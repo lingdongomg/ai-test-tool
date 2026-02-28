@@ -5,6 +5,7 @@
 
 import json
 import uuid
+from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
@@ -70,6 +71,22 @@ async def execute_tests(
 
     # 创建执行记录
     execution_id = str(uuid.uuid4())[:8]
+    started_at = datetime.now().isoformat()
+
+    # 写入 test_executions 表（状态: running）
+    db.execute("""
+        INSERT INTO test_executions
+        (execution_id, name, execution_type, trigger_type, status,
+         base_url, environment, total_cases, started_at)
+        VALUES (%s, %s, 'test', 'manual', 'running', %s, %s, %s, %s)
+    """, (
+        execution_id,
+        f"手动执行 ({len(cases)} 个用例)",
+        request.base_url,
+        request.environment,
+        len(cases),
+        started_at
+    ))
 
     try:
         # 转换数据库记录为 TestCase 对象
@@ -138,6 +155,42 @@ async def execute_tests(
         error = sum(1 for r in results if r.status.value == 'error')
         skipped = sum(1 for r in results if r.status.value == 'skipped')
         total_duration = sum(r.actual_response_time_ms for r in results)
+        completed_at = datetime.now().isoformat()
+
+        # 持久化每条用例的执行结果到 test_results 表
+        for r in results:
+            db.execute("""
+                INSERT INTO test_results
+                (case_id, execution_id, result_type, status,
+                 actual_status_code, actual_response_time_ms,
+                 actual_response_body, actual_headers,
+                 error_message, assertion_results, executed_at)
+                VALUES (%s, %s, 'test', %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                r.test_case_id,
+                execution_id,
+                r.status.value,
+                r.actual_status_code,
+                r.actual_response_time_ms,
+                (r.actual_response_body or '')[:5000],
+                json.dumps(r.actual_headers, ensure_ascii=False) if r.actual_headers else None,
+                r.error_message or None,
+                json.dumps(r.validation_results, ensure_ascii=False) if r.validation_results else None,
+                completed_at
+            ))
+
+        # 更新 test_executions 表状态为 completed
+        db.execute("""
+            UPDATE test_executions SET
+                status = 'completed',
+                passed_cases = %s,
+                failed_cases = %s,
+                error_cases = %s,
+                skipped_cases = %s,
+                duration_ms = %s,
+                completed_at = %s
+            WHERE execution_id = %s
+        """, (passed, failed, error, skipped, int(total_duration), completed_at, execution_id))
 
         # 转换结果为字典
         result_dicts = [r.to_dict() for r in results]
@@ -157,6 +210,11 @@ async def execute_tests(
         }
 
     except Exception as e:
+        # 更新执行记录为失败
+        db.execute("""
+            UPDATE test_executions SET status = 'failed', error_message = %s,
+            completed_at = %s WHERE execution_id = %s
+        """, (str(e), datetime.now().isoformat(), execution_id))
         logger.error(f"执行测试失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -174,22 +232,28 @@ async def list_executions(
     params: list[Any] = []
 
     if status:
-        conditions.append("status = %s")
+        conditions.append("e.status = %s")
         params.append(status)
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     # 获取总数
-    count_sql = f"SELECT COUNT(*) as count FROM scenario_executions {where_clause}"
+    count_sql = f"SELECT COUNT(*) as count FROM test_executions e {where_clause}"
     count_result = db.fetch_one(count_sql, tuple(params) if params else None)
     total = count_result['count'] if count_result else 0
 
     # 获取分页数据
     offset = (page - 1) * page_size
     sql = f"""
-        SELECT * FROM scenario_executions
+        SELECT
+            e.*,
+            CASE WHEN e.total_cases > 0
+                THEN ROUND(e.passed_cases * 100.0 / e.total_cases, 2)
+                ELSE 0
+            END as pass_rate
+        FROM test_executions e
         {where_clause}
-        ORDER BY created_at DESC
+        ORDER BY e.created_at DESC
         LIMIT %s OFFSET %s
     """
     params.extend([page_size, offset])
@@ -200,6 +264,51 @@ async def list_executions(
         "page": page,
         "page_size": page_size,
         "items": [dict(row) for row in rows]
+    }
+
+
+@router.get("/executions/{execution_id}")
+async def get_execution_detail(
+    execution_id: str,
+    db: DatabaseManager = Depends(get_database)
+):
+    """获取执行记录详情，包含每条用例的执行结果"""
+    # 获取执行批次信息
+    execution = db.fetch_one(
+        "SELECT * FROM test_executions WHERE execution_id = %s",
+        (execution_id,)
+    )
+    if not execution:
+        raise HTTPException(status_code=404, detail="执行记录不存在")
+
+    # 获取该批次下所有用例的执行结果
+    results = db.fetch_all("""
+        SELECT tr.*, tc.name as case_name, tc.method, tc.url, tc.category
+        FROM test_results tr
+        LEFT JOIN test_cases tc ON tr.case_id = tc.case_id
+        WHERE tr.execution_id = %s
+        ORDER BY tr.id
+    """, (execution_id,))
+
+    result_items = []
+    for r in results:
+        item = dict(r)
+        # 解析 assertion_results JSON
+        if item.get('assertion_results') and isinstance(item['assertion_results'], str):
+            try:
+                item['assertion_results'] = json.loads(item['assertion_results'])
+            except (json.JSONDecodeError, ValueError):
+                pass
+        result_items.append(item)
+
+    exec_dict = dict(execution)
+    exec_dict['pass_rate'] = round(
+        exec_dict.get('passed_cases', 0) / exec_dict.get('total_cases', 1) * 100, 2
+    ) if exec_dict.get('total_cases') else 0
+
+    return {
+        "execution": exec_dict,
+        "results": result_items
     }
 
 

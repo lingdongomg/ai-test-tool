@@ -81,7 +81,7 @@ async def upload_log_file(
     detect_types: str | None = Form(default=None),
     include_ai_analysis: bool = Form(default=True),
     max_lines: int | None = Form(default=None, description="最大处理行数"),
-    background_tasks: BackgroundTasks | None = None,
+    background_tasks: BackgroundTasks = None,
     task_repo: TaskRepository = Depends(get_task_repository),
 ):
     """

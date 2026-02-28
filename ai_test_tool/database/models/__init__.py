@@ -18,7 +18,7 @@ from .base import (
 from .task import AnalysisTask, ParsedRequestRecord, AnalysisReport
 
 # 测试相关模型
-from .test import TestCaseRecord, TestCaseHistory, TestExecution, TestResultRecord
+from .test import TestFolder, TestCaseRecord, TestCaseHistory, TestExecution, TestResultRecord
 
 # API 相关模型
 from .api import ApiTag, ApiEndpoint
@@ -69,7 +69,7 @@ __all__ = [
     'KnowledgeType', 'KnowledgeStatus', 'KnowledgeSource',
     # 模型
     'AnalysisTask', 'ParsedRequestRecord', 'AnalysisReport',
-    'TestCaseRecord', 'TestCaseHistory', 'TestExecution', 'TestResultRecord',
+    'TestFolder', 'TestCaseRecord', 'TestCaseHistory', 'TestExecution', 'TestResultRecord',
     'ApiTag', 'ApiEndpoint',
     'TestScenario', 'ScenarioStep', 'ScenarioExecution', 'StepResult',
     'KnowledgeEntry', 'KnowledgeHistory', 'KnowledgeUsage',

@@ -27,7 +27,7 @@ class GeneratedTestCase:
     url: str
     headers: dict[str, str] = field(default_factory=dict)
     body: dict[str, Any] | None = None
-    query_params: dict[str, str] = field(default_factory=dict)
+    query_params: dict[str, Any] = field(default_factory=dict)
     expected_status_code: int = 200
     assertions: list[dict[str, Any]] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
@@ -247,7 +247,7 @@ class EndpointTestGeneratorService:
         # 处理 query 参数
         for param in parameters:
             if param.get('in') == 'query':
-                query_params[param['name']] = self._generate_sample_value(param)
+                query_params[param['name']] = self._generate_typed_value(param)
         
         # 处理 request body
         if request_body and method.upper() in ['POST', 'PUT', 'PATCH']:
@@ -316,7 +316,7 @@ class EndpointTestGeneratorService:
                         url=path,
                         headers={"Content-Type": "application/json"},
                         body={param_name: minimum} if param.get('in') == 'body' else None,
-                        query_params={param_name: str(minimum)} if param.get('in') == 'query' else {},
+                        query_params={param_name: minimum} if param.get('in') == 'query' else {},
                         expected_status_code=200,
                         tags=["boundary", f"param:{param_name}"]
                     ))
@@ -331,7 +331,7 @@ class EndpointTestGeneratorService:
                         url=path,
                         headers={"Content-Type": "application/json"},
                         body={param_name: maximum} if param.get('in') == 'body' else None,
-                        query_params={param_name: str(maximum)} if param.get('in') == 'query' else {},
+                        query_params={param_name: maximum} if param.get('in') == 'query' else {},
                         expected_status_code=200,
                         tags=["boundary", f"param:{param_name}"]
                     ))
@@ -631,28 +631,29 @@ class EndpointTestGeneratorService:
             return []
 
     def _generate_sample_value(self, param: dict) -> str:
-        """根据参数定义生成示例值"""
+        """
+        根据参数定义生成示例值
+        优先使用 example/default/enum，其次根据字段名语义和描述推断合理值
+        """
         schema = param.get('schema', param)
+        param_name = param.get('name', '').lower()
         param_type = schema.get('type', 'string')
         param_format = schema.get('format', '')
         enum_values = schema.get('enum')
         example = schema.get('example')
         default = schema.get('default')
-        
+        description = (param.get('description', '') or schema.get('description', '') or '').lower()
+
+        # 1. 优先使用 example / default / enum
         if example is not None:
             return str(example)
         if default is not None:
             return str(default)
         if enum_values:
             return str(enum_values[0])
-        
-        if param_type == 'integer':
-            return "1"
-        elif param_type == 'number':
-            return "1.0"
-        elif param_type == 'boolean':
-            return "true"
-        elif param_format == 'date':
+
+        # 2. 根据 format 推断
+        if param_format == 'date':
             return datetime.now().strftime('%Y-%m-%d')
         elif param_format == 'date-time':
             return datetime.now().isoformat()
@@ -660,8 +661,111 @@ class EndpointTestGeneratorService:
             return "test@example.com"
         elif param_format == 'uuid':
             return "550e8400-e29b-41d4-a716-446655440000"
+        elif param_format == 'uri' or param_format == 'url':
+            return "https://example.com"
+        elif param_format == 'ipv4':
+            return "127.0.0.1"
+
+        # 3. 根据字段名语义推断
+        name_value_map: dict[str, str] = {
+            'page': '1', 'page_num': '1', 'pagenum': '1', 'current': '1',
+            'page_size': '10', 'pagesize': '10', 'size': '10', 'limit': '10',
+            'per_page': '10', 'perpage': '10',
+            'offset': '0', 'skip': '0',
+            'id': '1', 'user_id': '1001', 'uid': '1001',
+            'keyword': '测试', 'search': '测试', 'q': '测试', 'query': '测试',
+            'name': '测试名称', 'username': 'test_user', 'nickname': '测试用户',
+            'title': '测试标题',
+            'email': 'test@example.com', 'mail': 'test@example.com',
+            'phone': '13800138000', 'mobile': '13800138000', 'tel': '13800138000',
+            'status': '1', 'state': '1', 'type': '1',
+            'sort': 'created_at', 'order': 'desc', 'sort_by': 'created_at', 'order_by': 'desc',
+            'start_time': datetime.now().strftime('%Y-%m-%d') + ' 00:00:00',
+            'end_time': datetime.now().strftime('%Y-%m-%d') + ' 23:59:59',
+            'start_date': datetime.now().strftime('%Y-%m-%d'),
+            'end_date': datetime.now().strftime('%Y-%m-%d'),
+            'token': 'test_token_xxx', 'access_token': 'test_token_xxx',
+            'url': 'https://example.com', 'link': 'https://example.com',
+            'ip': '127.0.0.1', 'address': '测试地址',
+            'tag': 'default', 'category': 'default', 'group': 'default',
+            'version': '1.0.0', 'lang': 'zh-CN', 'language': 'zh-CN',
+            'environment': 'test', 'env': 'test',
+        }
+        if param_name in name_value_map:
+            return name_value_map[param_name]
+
+        # 部分匹配：字段名包含关键词
+        if any(kw in param_name for kw in ('time', 'date', '_at')):
+            return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if any(kw in param_name for kw in ('email', 'mail')):
+            return "test@example.com"
+        if any(kw in param_name for kw in ('phone', 'mobile', 'tel')):
+            return "13800138000"
+        if any(kw in param_name for kw in ('url', 'link', 'href')):
+            return "https://example.com"
+        if any(kw in param_name for kw in ('count', 'num', 'total', 'amount')):
+            return "10"
+        if any(kw in param_name for kw in ('_id', 'Id', '_ids')):
+            return "1"
+        if 'page' in param_name:
+            return "1"
+
+        # 也参考 description 中的语义
+        if any(kw in description for kw in ('页码', '第几页')):
+            return "1"
+        if any(kw in description for kw in ('每页', '页大小', 'page size')):
+            return "10"
+        if any(kw in description for kw in ('邮箱', 'email')):
+            return "test@example.com"
+        if any(kw in description for kw in ('手机', '电话', 'phone')):
+            return "13800138000"
+
+        # 4. 根据类型兜底
+        if param_type == 'integer':
+            return "1"
+        elif param_type == 'number':
+            return "1.0"
+        elif param_type == 'boolean':
+            return "true"
         else:
-            return "test_value"
+            return f"test_{param_name}" if param_name else "test_value"
+
+    def _generate_typed_value(self, param: dict) -> Any:
+        """
+        生成保留原始类型的参数值（用于 query_params）
+        整数类型返回 int，数字类型返回 float，布尔返回 bool，其余返回 str
+        """
+        schema = param.get('schema', param)
+        param_type = schema.get('type', 'string')
+        example = schema.get('example')
+        default = schema.get('default')
+
+        # example 和 default 直接使用原始类型
+        if example is not None:
+            return example
+        if default is not None:
+            return default
+
+        enum_values = schema.get('enum')
+        if enum_values:
+            return enum_values[0]
+
+        # 按类型返回对应值
+        str_val = self._generate_sample_value(param)
+        if param_type == 'integer':
+            try:
+                return int(str_val)
+            except (ValueError, TypeError):
+                return 1
+        elif param_type == 'number':
+            try:
+                return float(str_val)
+            except (ValueError, TypeError):
+                return 1.0
+        elif param_type == 'boolean':
+            return str_val.lower() in ('true', '1', 'yes')
+        else:
+            return str_val
     
     def _extract_body_schema(self, request_body: dict) -> dict[str, Any]:
         """
@@ -686,7 +790,7 @@ class EndpointTestGeneratorService:
         return {}
 
     def _generate_request_body(self, request_body: dict) -> dict[str, Any]:
-        """根据 request_body 定义生成请求体"""
+        """根据 request_body 定义生成请求体，参考字段名语义和描述"""
         schema = self._extract_body_schema(request_body)
 
         if schema.get('example'):
@@ -705,19 +809,76 @@ class EndpointTestGeneratorService:
             elif default is not None:
                 body[name] = default
             elif prop_type == 'string':
-                body[name] = f"test_{name}"
+                # 利用 _generate_sample_value 的语义推断能力
+                body[name] = self._generate_sample_value({'name': name, 'schema': prop, 'description': prop.get('description', '')})
             elif prop_type == 'integer':
-                body[name] = 1
+                body[name] = self._infer_integer_value(name, prop)
             elif prop_type == 'number':
-                body[name] = 1.0
+                body[name] = self._infer_number_value(name, prop)
             elif prop_type == 'boolean':
                 body[name] = True
             elif prop_type == 'array':
                 body[name] = []
             elif prop_type == 'object':
-                body[name] = {}
+                # 递归生成子对象
+                if prop.get('properties'):
+                    sub_body: dict[str, Any] = {}
+                    for sub_name, sub_prop in prop['properties'].items():
+                        sub_type = sub_prop.get('type', 'string')
+                        if sub_prop.get('example') is not None:
+                            sub_body[sub_name] = sub_prop['example']
+                        elif sub_type == 'string':
+                            sub_body[sub_name] = self._generate_sample_value({'name': sub_name, 'schema': sub_prop})
+                        elif sub_type == 'integer':
+                            sub_body[sub_name] = self._infer_integer_value(sub_name, sub_prop)
+                        elif sub_type == 'number':
+                            sub_body[sub_name] = self._infer_number_value(sub_name, sub_prop)
+                        elif sub_type == 'boolean':
+                            sub_body[sub_name] = True
+                        else:
+                            sub_body[sub_name] = None
+                    body[name] = sub_body
+                else:
+                    body[name] = {}
 
         return body
+
+    def _infer_integer_value(self, name: str, prop: dict) -> int:
+        """根据字段名和约束推断整数值"""
+        name_lower = name.lower()
+        if any(kw in name_lower for kw in ('page_size', 'pagesize', 'size', 'limit', 'per_page')):
+            return 10
+        if any(kw in name_lower for kw in ('page', 'current', 'page_num')):
+            return 1
+        if any(kw in name_lower for kw in ('status', 'state', 'type', 'level', 'code')):
+            return 1
+        if any(kw in name_lower for kw in ('count', 'num', 'total', 'amount', 'quantity')):
+            return 10
+        if any(kw in name_lower for kw in ('age',)):
+            return 25
+        if '_id' in name_lower or name_lower.endswith('id') or name_lower == 'id':
+            return 1
+        minimum = prop.get('minimum')
+        maximum = prop.get('maximum')
+        if minimum is not None:
+            return int(minimum)
+        return 1
+
+    def _infer_number_value(self, name: str, prop: dict) -> float:
+        """根据字段名和约束推断数值"""
+        name_lower = name.lower()
+        if any(kw in name_lower for kw in ('price', 'amount', 'money', 'cost', 'fee')):
+            return 99.99
+        if any(kw in name_lower for kw in ('rate', 'ratio', 'percent')):
+            return 0.5
+        if any(kw in name_lower for kw in ('lat', 'latitude')):
+            return 39.9042
+        if any(kw in name_lower for kw in ('lng', 'lon', 'longitude')):
+            return 116.4074
+        minimum = prop.get('minimum')
+        if minimum is not None:
+            return float(minimum)
+        return 1.0
     
     def _deduplicate_cases(self, cases: list[GeneratedTestCase]) -> list[GeneratedTestCase]:
         """去重测试用例"""
