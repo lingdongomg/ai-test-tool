@@ -16,7 +16,7 @@ from ....database.repository import TaskRepository
 from ....database.models.base import TaskStatus
 from ....utils.logger import get_logger
 from ....utils.sql_security import build_safe_like
-from ...dependencies import get_database, get_task_repository
+from ...dependencies import get_database, get_task_repository, get_test_folder_repository
 from .schemas import GenerateTestsRequest, UpdateTestCaseRequest
 
 router = APIRouter()
@@ -296,7 +296,8 @@ async def list_test_cases(
     folder_id: str | None = Query(default=None, description="文件夹ID，'uncategorized'表示未分类"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    db: DatabaseManager = Depends(get_database)
+    db: DatabaseManager = Depends(get_database),
+    folder_repo=Depends(get_test_folder_repository)
 ):
     """获取测试用例列表"""
     conditions = []
@@ -306,8 +307,11 @@ async def list_test_cases(
         if folder_id == 'uncategorized':
             conditions.append("tc.folder_id IS NULL")
         else:
-            conditions.append("tc.folder_id = %s")
-            params.append(folder_id)
+            # 递归包含所有子孙文件夹的用例
+            all_folder_ids = [folder_id] + folder_repo.get_descendant_ids(folder_id)
+            placeholders = ', '.join(['%s'] * len(all_folder_ids))
+            conditions.append(f"tc.folder_id IN ({placeholders})")
+            params.extend(all_folder_ids)
 
     if endpoint_id:
         # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配

@@ -83,6 +83,17 @@ export default {
 </script>
 
 <style scoped>
+.folder-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s;
+  font-size: 13px;
+}
+
 .folder-expand {
   display: inline-flex;
   align-items: center;
@@ -102,6 +113,19 @@ export default {
 
 .folder-expand.invisible {
   visibility: hidden;
+}
+
+.folder-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .folder-badge {

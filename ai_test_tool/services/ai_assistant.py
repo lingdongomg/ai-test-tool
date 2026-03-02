@@ -573,7 +573,7 @@ class AIAssistantService:
                             "method": e['method'],
                             "path": e['path'],
                             "name": e.get('name', ''),
-                            "updated_at": e['updated_at'].isoformat() if e.get('updated_at') else None
+                            "updated_at": e.get('updated_at')
                         }
                         for e in recently_changed
                     ]

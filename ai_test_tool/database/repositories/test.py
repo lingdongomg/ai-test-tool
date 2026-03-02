@@ -79,7 +79,7 @@ class TestFolderRepository(BaseRepository[TestFolder]):
             "DELETE FROM test_folders WHERE folder_id = %s", (folder_id,)
         )
 
-    def _get_descendant_ids(self, folder_id: str) -> list[str]:
+    def get_descendant_ids(self, folder_id: str) -> list[str]:
         """递归获取所有子孙文件夹 ID"""
         result = []
         children = self.db.fetch_all(
@@ -89,8 +89,11 @@ class TestFolderRepository(BaseRepository[TestFolder]):
         for child in children:
             cid = child['folder_id']
             result.append(cid)
-            result.extend(self._get_descendant_ids(cid))
+            result.extend(self.get_descendant_ids(cid))
         return result
+
+    # 兼容旧调用
+    _get_descendant_ids = get_descendant_ids
 
     def get_depth(self, folder_id: str) -> int:
         """获取文件夹的嵌套深度（顶级为 1）"""

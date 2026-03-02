@@ -925,7 +925,7 @@ onUnmounted(() => {
   padding: 4px 0;
 }
 
-.folder-node {
+:deep(.folder-node) {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -936,40 +936,41 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-.folder-node:hover {
+:deep(.folder-node):hover {
   background: var(--td-bg-color-container-hover);
 }
 
-.folder-node.active {
+:deep(.folder-node).active {
   background: var(--td-brand-color-light);
   color: var(--td-brand-color);
   font-weight: 500;
 }
 
-.folder-node.drag-over {
+:deep(.folder-node).drag-over {
   background: var(--td-brand-color-light-hover);
   outline: 2px dashed var(--td-brand-color);
   outline-offset: -2px;
 }
 
-.folder-node.uncategorized {
+:deep(.folder-node).uncategorized {
   border-top: 1px solid var(--td-border-level-1-color);
   margin-top: 4px;
 }
 
-.folder-icon {
+:deep(.folder-icon) {
   font-size: 14px;
   flex-shrink: 0;
 }
 
-.folder-name {
+:deep(.folder-name) {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.folder-badge {
+:deep(.folder-badge) {
   margin-left: 6px;
   font-size: 10px;
   line-height: 16px;

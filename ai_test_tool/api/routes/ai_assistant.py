@@ -364,7 +364,7 @@ async def get_recommendations(
         }
     except Exception as e:
         logger.error(f"获取建议失败: {e}")
-        raise LLMError(f"获取建议失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取建议失败: {e}")
 
 
 # ==================== AI 洞察管理 ====================

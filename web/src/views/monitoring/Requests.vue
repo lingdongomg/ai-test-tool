@@ -189,6 +189,68 @@
         </t-form-item>
       </t-form>
     </t-dialog>
+
+    <!-- 请求详情抽屉 -->
+    <t-drawer
+      v-model:visible="detailDrawerVisible"
+      header="请求详情"
+      size="520px"
+    >
+      <template v-if="currentDetail">
+        <t-descriptions :column="1" bordered>
+          <t-descriptions-item label="HTTP方法">
+            <t-tag :theme="getMethodTheme(currentDetail.request.method)" variant="light" size="small">
+              {{ currentDetail.request.method }}
+            </t-tag>
+          </t-descriptions-item>
+          <t-descriptions-item label="URL">
+            <span style="font-family: Monaco, Menlo, monospace; font-size: 12px; word-break: break-all;">
+              {{ currentDetail.request.url }}
+            </span>
+          </t-descriptions-item>
+          <t-descriptions-item label="期望状态码">{{ currentDetail.request.expected_status_code || '-' }}</t-descriptions-item>
+          <t-descriptions-item label="健康状态">
+            <t-tag v-if="currentDetail.request.last_check_status" :theme="getHealthTheme(currentDetail.request.last_check_status)">
+              {{ currentDetail.request.last_check_status === 'healthy' ? '健康' : '异常' }}
+            </t-tag>
+            <span v-else class="no-check">未检查</span>
+          </t-descriptions-item>
+          <t-descriptions-item label="连续失败">{{ currentDetail.request.consecutive_failures || 0 }} 次</t-descriptions-item>
+          <t-descriptions-item label="上次检查">{{ currentDetail.request.last_check_at || '-' }}</t-descriptions-item>
+          <t-descriptions-item v-if="currentDetail.request.description" label="描述">{{ currentDetail.request.description }}</t-descriptions-item>
+          <t-descriptions-item v-if="currentDetail.request.tags" label="标签">
+            <t-space size="small">
+              <t-tag v-for="tag in (typeof currentDetail.request.tags === 'string' ? JSON.parse(currentDetail.request.tags || '[]') : currentDetail.request.tags)" :key="tag" size="small" variant="light">
+                {{ tag }}
+              </t-tag>
+            </t-space>
+          </t-descriptions-item>
+          <t-descriptions-item v-if="currentDetail.request.headers" label="请求头">
+            <pre style="margin: 0; font-size: 12px; white-space: pre-wrap;">{{ typeof currentDetail.request.headers === 'string' ? currentDetail.request.headers : JSON.stringify(currentDetail.request.headers, null, 2) }}</pre>
+          </t-descriptions-item>
+          <t-descriptions-item v-if="currentDetail.request.body" label="请求体">
+            <pre style="margin: 0; font-size: 12px; white-space: pre-wrap;">{{ currentDetail.request.body }}</pre>
+          </t-descriptions-item>
+        </t-descriptions>
+
+        <t-divider>检查历史</t-divider>
+        <template v-if="currentDetail.check_history?.length">
+          <div v-for="(record, index) in currentDetail.check_history" :key="index" class="history-item">
+            <div class="history-header">
+              <t-tag :theme="record.success ? 'success' : 'danger'" size="small">
+                {{ record.success ? '成功' : '失败' }}
+              </t-tag>
+              <span class="history-status-code">HTTP {{ record.status_code }}</span>
+              <span class="history-time">{{ record.response_time_ms }}ms</span>
+              <span class="history-date">{{ record.checked_at }}</span>
+            </div>
+            <div v-if="record.error_message" class="history-error">{{ record.error_message }}</div>
+          </div>
+        </template>
+        <t-empty v-else description="暂无检查记录" />
+      </template>
+      <t-loading v-else-if="detailLoading" />
+    </t-drawer>
   </div>
 </template>
 
@@ -238,6 +300,11 @@ const extractForm = reactive({
   max_requests_per_endpoint: 5,
   tags_str: ''
 })
+
+// 详情抽屉
+const detailDrawerVisible = ref(false)
+const detailLoading = ref(false)
+const currentDetail = ref<any>(null)
 
 // 表格列
 const columns = [
@@ -351,8 +418,19 @@ const confirmSave = async () => {
 }
 
 // 查看详情
-const handleView = (row: any) => {
-  MessagePlugin.info(`请求详情: ${row.method} ${row.url}（详情抽屉开发中）`)
+const handleView = async (row: any) => {
+  detailDrawerVisible.value = true
+  detailLoading.value = true
+  currentDetail.value = null
+  try {
+    const res = await monitoringApi.getRequest(row.request_id)
+    currentDetail.value = res
+  } catch (error) {
+    console.error('加载详情失败:', error)
+    MessagePlugin.error('加载详情失败')
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 // 执行检查
@@ -483,5 +561,45 @@ const getHealthTheme = (status: string) => {
 
 .no-check {
   color: rgba(0, 0, 0, 0.3);
+}
+
+.history-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--td-border-level-1-color);
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.history-status-code {
+  font-family: Monaco, Menlo, monospace;
+  font-size: 12px;
+}
+
+.history-time {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.history-date {
+  margin-left: auto;
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+}
+
+.history-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--td-error-color-1);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--td-error-color);
 }
 </style>
