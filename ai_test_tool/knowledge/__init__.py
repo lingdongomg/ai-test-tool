@@ -16,6 +16,7 @@ from .retriever import KnowledgeRetriever
 from .embeddings import EmbeddingProvider, get_embedding_provider
 from .rag_builder import RAGContextBuilder
 from .learner import KnowledgeLearner
+from .url_matcher import UrlPatternMatcher
 
 # 全局知识库存储实例
 _knowledge_store: KnowledgeStore | None = None
@@ -42,6 +43,7 @@ __all__ = [
     'get_embedding_provider',
     'RAGContextBuilder',
     'KnowledgeLearner',
+    'UrlPatternMatcher',
     # 工厂函数
     'get_knowledge_store',
 ]

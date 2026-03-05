@@ -264,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_test_results_executed_at ON test_results(executed
 CREATE TABLE IF NOT EXISTS analysis_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL,
-    report_type TEXT DEFAULT 'analysis' CHECK(report_type IN ('analysis', 'test', 'summary', 'insight')),
+    report_type TEXT DEFAULT 'analysis' CHECK(report_type IN ('analysis', 'test', 'summary', 'insight', 'anomaly')),
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     format TEXT DEFAULT 'markdown' CHECK(format IN ('markdown', 'html', 'json')),
@@ -279,6 +279,7 @@ CREATE TABLE IF NOT EXISTS analysis_reports (
 CREATE INDEX IF NOT EXISTS idx_analysis_reports_task_id ON analysis_reports(task_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_reports_report_type ON analysis_reports(report_type);
 CREATE INDEX IF NOT EXISTS idx_analysis_reports_severity ON analysis_reports(severity);
+CREATE INDEX IF NOT EXISTS idx_analysis_reports_type_created ON analysis_reports(report_type, created_at);
 
 -- =====================================================
 -- 测试场景表

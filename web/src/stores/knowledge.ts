@@ -1,5 +1,6 @@
 /**
  * 知识库模块状态管理
+ * 该文件内容使用AI生成，注意识别准确性
  */
 
 import { defineStore } from 'pinia'
@@ -31,30 +32,19 @@ interface KnowledgeStatistics {
 
 // State 类型
 interface KnowledgeState {
-  // 知识列表
   entries: KnowledgeEntry[]
   loading: boolean
   pagination: PaginationParams & { total: number }
   filters: KnowledgeFilters
-
-  // 待审核列表
   pendingEntries: KnowledgeEntry[]
   pendingLoading: boolean
-
-  // 统计数据
   statistics: KnowledgeStatistics | null
   statisticsLoading: boolean
-
-  // 当前选中
   currentEntry: KnowledgeEntry | null
-
-  // 所有标签
-  allTags: string[]
 }
 
 export const useKnowledgeStore = defineStore('knowledge', {
   state: (): KnowledgeState => ({
-    // 知识列表
     entries: [],
     loading: false,
     pagination: { page: 1, pageSize: 20, total: 0 },
@@ -65,34 +55,20 @@ export const useKnowledgeStore = defineStore('knowledge', {
       scope: '',
       keyword: ''
     },
-
-    // 待审核列表
     pendingEntries: [],
     pendingLoading: false,
-
-    // 统计数据
     statistics: null,
     statisticsLoading: false,
-
-    // 当前选中
-    currentEntry: null,
-
-    // 所有标签
-    allTags: []
+    currentEntry: null
   }),
 
   getters: {
-    // 待审核数量
     pendingCount(): number {
       return this.statistics?.pending_review ?? 0
     },
-
-    // 各类型数量
     typeCountMap(): Record<string, number> {
       return this.statistics?.by_type ?? {}
     },
-
-    // 活跃知识数量
     activeCount(): number {
       return this.statistics?.by_status?.active ?? 0
     }
@@ -113,7 +89,7 @@ export const useKnowledgeStore = defineStore('knowledge', {
           scope: this.filters.scope || undefined,
           keyword: this.filters.keyword || undefined
         }
-        const result = await knowledgeApi.listEntries(params) as {
+        const result = await knowledgeApi.list(params) as {
           items: KnowledgeEntry[]
           total: number
         }
@@ -126,30 +102,25 @@ export const useKnowledgeStore = defineStore('knowledge', {
 
     async fetchEntry(knowledgeId: string) {
       try {
-        this.currentEntry = await knowledgeApi.getEntry(knowledgeId) as KnowledgeEntry
+        this.currentEntry = await knowledgeApi.get(knowledgeId) as KnowledgeEntry
       } catch {
         this.currentEntry = null
       }
     },
 
     async createEntry(entry: Partial<KnowledgeEntry>) {
-      const result = await knowledgeApi.createEntry(entry)
+      const result = await knowledgeApi.create(entry as any)
       await this.fetchEntries()
       return result
     },
 
     async updateEntry(knowledgeId: string, updates: Partial<KnowledgeEntry>) {
-      await knowledgeApi.updateEntry(knowledgeId, updates)
+      await knowledgeApi.update(knowledgeId, updates)
       await this.fetchEntries()
     },
 
     async deleteEntry(knowledgeId: string) {
-      await knowledgeApi.deleteEntry(knowledgeId)
-      await this.fetchEntries()
-    },
-
-    async archiveEntry(knowledgeId: string) {
-      await knowledgeApi.archiveEntry(knowledgeId)
+      await knowledgeApi.delete(knowledgeId)
       await this.fetchEntries()
     },
 
@@ -169,26 +140,23 @@ export const useKnowledgeStore = defineStore('knowledge', {
     async fetchPendingEntries() {
       this.pendingLoading = true
       try {
-        const result = await knowledgeApi.listPending({ page_size: 100 }) as {
-          items: KnowledgeEntry[]
-          total: number
-        }
-        this.pendingEntries = result.items
+        const result = await knowledgeApi.listPending({ limit: 100 }) as any
+        this.pendingEntries = Array.isArray(result) ? result : (result.items ?? [])
       } finally {
         this.pendingLoading = false
       }
     },
 
     async approveEntry(knowledgeId: string) {
-      await knowledgeApi.approve(knowledgeId)
+      await knowledgeApi.review({ knowledge_ids: [knowledgeId], action: 'approve' })
       await Promise.all([
         this.fetchPendingEntries(),
         this.fetchStatistics()
       ])
     },
 
-    async rejectEntry(knowledgeId: string, reason?: string) {
-      await knowledgeApi.reject(knowledgeId, reason)
+    async rejectEntry(knowledgeId: string) {
+      await knowledgeApi.review({ knowledge_ids: [knowledgeId], action: 'reject' })
       await Promise.all([
         this.fetchPendingEntries(),
         this.fetchStatistics()
@@ -196,14 +164,14 @@ export const useKnowledgeStore = defineStore('knowledge', {
     },
 
     async batchApprove(knowledgeIds: string[]) {
-      await knowledgeApi.batchApprove(knowledgeIds)
+      await knowledgeApi.review({ knowledge_ids: knowledgeIds, action: 'approve' })
       await Promise.all([
         this.fetchPendingEntries(),
         this.fetchStatistics()
       ])
     },
 
-    // ==================== 统计和标签 ====================
+    // ==================== 统计和搜索 ====================
 
     async fetchStatistics() {
       this.statisticsLoading = true
@@ -214,19 +182,8 @@ export const useKnowledgeStore = defineStore('knowledge', {
       }
     },
 
-    async fetchAllTags() {
-      try {
-        const result = await knowledgeApi.getAllTags() as { tags: string[] }
-        this.allTags = result.tags
-      } catch {
-        this.allTags = []
-      }
-    },
-
-    // ==================== 搜索 ====================
-
     async searchKnowledge(query: string, limit?: number) {
-      return await knowledgeApi.search(query, limit)
+      return await knowledgeApi.search({ query, top_k: limit })
     },
 
     // ==================== 重置 ====================

@@ -36,6 +36,12 @@
         hover
         @page-change="handlePageChange"
       >
+        <template #empty>
+          <div style="padding: 48px 0; text-align: center; color: var(--td-text-color-placeholder);">
+            <p style="font-size: 14px; margin-bottom: 8px;">暂无执行记录</p>
+            <p style="font-size: 12px;">执行测试用例后，记录将显示在这里</p>
+          </div>
+        </template>
         <template #status="{ row }">
           <t-tag :theme="getStatusTheme(row.status)">
             {{ getStatusLabel(row.status) }}
@@ -107,6 +113,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon } from 'tdesign-icons-vue-next'
 import { developmentApi } from '../../api/v2'
 
@@ -160,6 +167,7 @@ const loadExecutions = async () => {
     pagination.total = res.total || 0
   } catch (error) {
     console.error('加载执行记录失败:', error)
+    MessagePlugin.error('加载执行记录失败')
   } finally {
     loading.value = false
   }
@@ -193,6 +201,7 @@ const handleViewDetail = async (row: any) => {
     executionResults.value = res.results || []
   } catch (error) {
     console.error('加载执行详情失败:', error)
+    MessagePlugin.error('加载执行详情失败')
   }
 }
 

@@ -289,9 +289,10 @@
           <t-col :span="6">
             <t-form-item label="优先级">
               <t-select v-model="editForm.priority" style="width: 100%;">
-                <t-option value="high">高</t-option>
-                <t-option value="medium">中</t-option>
-                <t-option value="low">低</t-option>
+                <t-option value="P0">P0 - 紧急</t-option>
+                <t-option value="P1">P1 - 高</t-option>
+                <t-option value="P2">P2 - 中</t-option>
+                <t-option value="P3">P3 - 低</t-option>
               </t-select>
             </t-form-item>
           </t-col>
@@ -554,7 +555,7 @@ const editForm = reactive({
   name: '',
   description: '',
   category: 'normal',
-  priority: 'medium',
+  priority: 'P2',
   method: 'GET',
   url: '',
   expected_status_code: 200,
@@ -608,32 +609,41 @@ const handleGenerateTests = async () => {
     loadData()
   } catch (error) {
     console.error('生成测试用例失败:', error)
+    MessagePlugin.error('生成测试用例失败')
   }
 }
 
 // 执行测试
-const handleExecuteTests = () => {
+const executeCaseIds = ref<string[]>([])
+
+const handleExecuteCase = (row: any) => {
+  executeCaseIds.value = [row.case_id]
   executeDialogVisible.value = true
 }
 
-const handleExecuteCase = (_row: any) => {
-  // 可以根据 _row 设置单个用例执行
+const handleExecuteTests = () => {
+  executeCaseIds.value = []
   executeDialogVisible.value = true
 }
 
 const confirmExecute = async () => {
   executing.value = true
   try {
-    const res = await developmentApi.executeTests({
+    const payload: any = {
       endpoint_id: endpointId,
       base_url: executeForm.base_url,
       environment: executeForm.environment
-    })
+    }
+    if (executeCaseIds.value.length > 0) {
+      payload.case_ids = executeCaseIds.value
+    }
+    const res = await developmentApi.executeTests(payload)
     MessagePlugin.success(`执行完成，通过率: ${res.pass_rate}%`)
     executeDialogVisible.value = false
     loadData()
-  } catch (error) {
+  } catch (error: any) {
     console.error('执行测试失败:', error)
+    MessagePlugin.error('执行测试失败: ' + (error?.response?.data?.detail || error.message))
   } finally {
     executing.value = false
   }
@@ -664,7 +674,7 @@ const handleEditCase = (row: any) => {
   editForm.name = row.name || ''
   editForm.description = row.description || ''
   editForm.category = row.category || 'normal'
-  editForm.priority = row.priority || 'medium'
+  editForm.priority = row.priority || 'P2'
   editForm.method = row.method || 'GET'
   editForm.url = row.url || ''
   editForm.expected_status_code = row.expected_status_code || 200
@@ -683,7 +693,7 @@ const handleCopyCase = (row: any) => {
   editForm.name = row.name + ' (副本)'
   editForm.description = row.description || ''
   editForm.category = row.category || 'normal'
-  editForm.priority = row.priority || 'medium'
+  editForm.priority = row.priority || 'P2'
   editForm.method = row.method || 'GET'
   editForm.url = row.url || ''
   editForm.expected_status_code = row.expected_status_code || 200
@@ -743,6 +753,7 @@ const confirmEdit = async () => {
     loadData()
   } catch (error) {
     console.error('保存失败:', error)
+    MessagePlugin.error('保存失败')
   } finally {
     saving.value = false
   }

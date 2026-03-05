@@ -7,7 +7,12 @@
         <h2 class="welcome-title">AI Test Tool</h2>
         <p class="welcome-desc">接口自动化测试与智能运维平台</p>
       </div>
-      <div class="welcome-stats">
+      <div class="welcome-right">
+        <t-button theme="default" variant="outline" @click="handleRefresh" :loading="dataLoading" style="color: #fff; border-color: rgba(255,255,255,0.5); margin-right: 16px;">
+          <template #icon><RefreshIcon /></template>
+          刷新
+        </t-button>
+        <div class="welcome-stats">
         <div class="welcome-stat-item">
           <span class="welcome-stat-value">{{ stats.endpoints?.total || 0 }}</span>
           <span class="welcome-stat-label">接口</span>
@@ -23,10 +28,11 @@
           <span class="welcome-stat-label">健康度</span>
         </div>
       </div>
+      </div>
     </div>
 
     <!-- 核心指标卡片 -->
-    <t-row :gutter="[20, 20]" style="margin-top: 24px;">
+    <t-row :gutter="[20, 20]" style="margin-top: 24px;" v-loading="statsLoading">
       <t-col :xs="12" :sm="6" :md="6" :lg="6">
         <StatCard
           :value="stats.endpoints?.total || 0"
@@ -161,9 +167,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, type Component } from 'vue'
+import { ref, computed, onMounted, onUnmounted, type Component } from 'vue'
 import { useRouter } from 'vue-router'
-import { ApiIcon, CheckCircleIcon, HeartIcon, ErrorCircleIcon, FileImportIcon, CodeIcon, FileIcon, DashboardIcon, ChartIcon } from 'tdesign-icons-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
+import { ApiIcon, CheckCircleIcon, HeartIcon, ErrorCircleIcon, FileImportIcon, CodeIcon, FileIcon, DashboardIcon, ChartIcon, RefreshIcon } from 'tdesign-icons-vue-next'
 import VChart from 'vue-echarts'
 import { dashboardApi } from '../api/v2'
 import { StatCard, StatusTag } from '../components'
@@ -180,11 +187,15 @@ const insights = ref<any[]>([])
 const activities = ref<any[]>([])
 const healthTrend = ref<any[]>([])
 const anomalyTrend = ref<any[]>([])
-
+const dataLoading = ref(false)
+const statsLoading = ref(false)
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 // 加载数据
 const loadData = async () => {
+  dataLoading.value = true
+  statsLoading.value = true
   try {
-    const [statsRes, actionsRes, insightsRes, activitiesRes, healthRes, anomalyRes] = await Promise.all([
+    const results = await Promise.allSettled([
       dashboardApi.getStats(),
       dashboardApi.getQuickActions(),
       dashboardApi.getInsights(5),
@@ -193,18 +204,38 @@ const loadData = async () => {
       dashboardApi.getAnomalyTrend(7)
     ])
     
-    stats.value = statsRes
-    quickActions.value = actionsRes.actions || []
-    insights.value = insightsRes.insights || []
-    activities.value = activitiesRes.activities || []
-    healthTrend.value = healthRes.data || []
-    anomalyTrend.value = anomalyRes.data || []
+    const [statsRes, actionsRes, insightsRes, activitiesRes, healthRes, anomalyRes] = results
+    if (statsRes.status === 'fulfilled') stats.value = statsRes.value
+    if (actionsRes.status === 'fulfilled') quickActions.value = actionsRes.value?.actions || []
+    if (insightsRes.status === 'fulfilled') insights.value = insightsRes.value?.insights || []
+    if (activitiesRes.status === 'fulfilled') activities.value = activitiesRes.value?.activities || []
+    if (healthRes.status === 'fulfilled') healthTrend.value = healthRes.value?.data || []
+    if (anomalyRes.status === 'fulfilled') anomalyTrend.value = anomalyRes.value?.data || []
   } catch (error) {
     console.error('加载数据失败:', error)
+    MessagePlugin.error('加载数据失败')
+  } finally {
+    dataLoading.value = false
+    statsLoading.value = false
   }
 }
 
-onMounted(loadData)
+const handleRefresh = () => {
+  loadData()
+}
+
+onMounted(() => {
+  loadData()
+  // 每 60 秒自动刷新
+  autoRefreshTimer = setInterval(loadData, 60000)
+})
+
+onUnmounted(() => {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+})
 
 // =====================================================
 // 计算属性
@@ -350,12 +381,17 @@ const handleQuickAction = (action: any) => {
   font-weight: 400;
 }
 
+.welcome-right {
+  display: flex;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
 .welcome-stats {
   display: flex;
   align-items: center;
   gap: 0;
-  position: relative;
-  z-index: 1;
   background: rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   padding: 16px 28px;

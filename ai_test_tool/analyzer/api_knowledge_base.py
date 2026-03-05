@@ -405,3 +405,53 @@ class ApiKnowledgeBase:
     def is_empty(self) -> bool:
         """是否为空"""
         return len(self._endpoints) == 0
+
+    def sync_to_knowledge_store(self, store: 'Any') -> int:
+        """
+        该文件内容使用AI生成，注意识别准确性
+        将内存中的接口知识同步到持久化 KnowledgeStore
+
+        桥接 analyzer/api_knowledge_base（内存/CLI）与 knowledge/ 模块（持久化/Web API），
+        将每个 EndpointKnowledge 转为一条 knowledge_base 记录。
+
+        Args:
+            store: KnowledgeStore 实例
+
+        Returns:
+            新创建的知识条目数
+        """
+        created = 0
+        for ep in self._endpoints.values():
+            # 查重：按 scope (path) 和 title 检查是否已存在
+            existing = store.search(scope=ep.path, keyword=ep.name, limit=1)
+            if existing:
+                continue
+
+            content_parts = [f"{ep.method} {ep.path}"]
+            if ep.summary:
+                content_parts.append(f"摘要: {ep.summary}")
+            if ep.description:
+                content_parts.append(f"描述: {ep.description}")
+            if ep.parameters:
+                params_str = ", ".join(
+                    p.get("name", "") for p in ep.parameters[:10]
+                )
+                content_parts.append(f"参数: {params_str}")
+            if ep.request_body:
+                content_parts.append(f"请求体: {json.dumps(ep.request_body, ensure_ascii=False)[:200]}")
+
+            store.create(
+                title=f"[API] {ep.method} {ep.path} - {ep.name}",
+                content="\n".join(content_parts),
+                type="module_context",
+                category="api_endpoint",
+                scope=ep.path,
+                tags=ep.tags if ep.tags else [],
+                source="api_doc_sync",
+                source_ref=ep.endpoint_id,
+                status="active",
+                created_by="api_knowledge_base_sync"
+            )
+            created += 1
+
+        return created

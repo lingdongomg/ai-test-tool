@@ -1,7 +1,7 @@
 <template>
   <div class="endpoints-page">
     <!-- 统计卡片 -->
-    <t-row :gutter="[16, 16]" class="stats-row">
+    <t-row :gutter="[16, 16]" class="stats-row" v-loading="statsLoading">
       <t-col :xs="12" :sm="6">
         <t-card class="stat-card">
           <div class="stat-item">
@@ -46,6 +46,7 @@
             clearable
             style="width: 280px;"
             @enter="handleSearch"
+            @clear="handleSearch"
           >
             <template #prefix-icon><SearchIcon /></template>
           </t-input>
@@ -99,6 +100,12 @@
         @page-change="handlePageChange"
         @select-change="handleSelectChange"
       >
+        <template #empty>
+          <div style="padding: 48px 0; text-align: center; color: var(--td-text-color-placeholder);">
+            <p style="font-size: 14px; margin-bottom: 8px;">暂无接口数据</p>
+            <p style="font-size: 12px;">请先导入接口文档以开始使用</p>
+          </div>
+        </template>
         <template #method="{ row }">
           <t-tag :theme="getMethodTheme(row.method)" variant="light">
             {{ row.method }}
@@ -236,6 +243,7 @@ const router = useRouter()
 const endpoints = ref<any[]>([])
 const statistics = ref<any>({})
 const loading = ref(false)
+const statsLoading = ref(false)
 const selectedIds = ref<string[]>([])
 
 // 筛选
@@ -290,16 +298,21 @@ const loadEndpoints = async () => {
     pagination.total = res.total || 0
   } catch (error) {
     console.error('加载接口列表失败:', error)
+    MessagePlugin.error('加载接口列表失败')
   } finally {
     loading.value = false
   }
 }
 
 const loadStatistics = async () => {
+  statsLoading.value = true
   try {
     statistics.value = await developmentApi.getStatistics()
   } catch (error) {
     console.error('加载统计数据失败:', error)
+    MessagePlugin.error('加载统计数据失败')
+  } finally {
+    statsLoading.value = false
   }
 }
 
@@ -396,6 +409,7 @@ const confirmGenerate = async () => {
     
   } catch (error) {
     console.error('创建生成任务失败:', error)
+    MessagePlugin.error('创建生成任务失败')
   } finally {
     generating.value = false
   }

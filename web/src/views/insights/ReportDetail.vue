@@ -48,7 +48,7 @@ const report = ref<any>({})
 // 渲染 Markdown
 const renderedContent = computed(() => {
   if (!report.value.content) return ''
-  return marked(report.value.content)
+  return DOMPurify.sanitize(marked(report.value.content) as string)
 })
 
 // 加载数据

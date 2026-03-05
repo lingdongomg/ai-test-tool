@@ -1,9 +1,15 @@
 """
+该文件内容使用AI生成，注意识别准确性
+
 FastAPI 应用创建
+支持结构化 JSON 日志、TraceId 透传、请求计时
 """
 
 import logging
+import json
 import sys
+import time
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -25,8 +31,34 @@ from ..exceptions import (
 from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge, analysis
 
 
+class JSONLogFormatter(logging.Formatter):
+    """结构化 JSON 日志格式化器"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # 附加上下文（如 request_id）
+        if hasattr(record, "request_id"):
+            log_entry["request_id"] = record.request_id
+        if hasattr(record, "method"):
+            log_entry["method"] = record.method
+        if hasattr(record, "path"):
+            log_entry["path"] = record.path
+        if hasattr(record, "status_code"):
+            log_entry["status_code"] = record.status_code
+        if hasattr(record, "duration_ms"):
+            log_entry["duration_ms"] = record.duration_ms
+        if record.exc_info and record.exc_info[0] is not None:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry, ensure_ascii=False)
+
+
 def setup_logging() -> logging.Logger:
-    """设置 API 日志"""
+    """设置 API 结构化日志"""
     # 创建日志目录
     log_dir = Path(__file__).parent.parent.parent / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -39,16 +71,12 @@ def setup_logging() -> logging.Logger:
     logger = logging.getLogger("ai_test_tool.api")
     logger.setLevel(logging.DEBUG)
 
-    # 文件处理器
+    # 文件处理器 - JSON 结构化
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        '[%(asctime)s] [%(levelname)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(file_formatter)
+    file_handler.setFormatter(JSONLogFormatter())
 
-    # 控制台处理器
+    # 控制台处理器 - 人类可读格式
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_formatter = logging.Formatter(
@@ -163,12 +191,32 @@ def create_app() -> FastAPI:
             }
         )
 
-    # 请求日志中间件
+    # 请求日志中间件 - TraceId + 计时
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
-        logger.debug(f"请求: {request.method} {request.url.path}")
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        request.state.request_id = request_id
+        start_time = time.perf_counter()
+
         response = await call_next(request)
-        logger.debug(f"响应: {request.method} {request.url.path} - {response.status_code}")
+
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Response-Time"] = f"{duration_ms}ms"
+
+        log_extra = {
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        }
+        log_level = logging.WARNING if response.status_code >= 400 else logging.INFO
+        logger.log(
+            log_level,
+            f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms}ms)",
+            extra=log_extra,
+        )
         return response
 
     # ==================== API 路由 ====================
@@ -197,7 +245,35 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["健康检查"])
     async def health():
-        return {"status": "healthy"}
+        """增强健康检查 - 包含数据库连通性和基本指标"""
+        from ..database import get_db_manager
+        health_detail: dict = {"status": "healthy", "version": "2.0.0"}
+        try:
+            db = get_db_manager()
+            db.fetch_one("SELECT 1")
+            health_detail["database"] = "ok"
+        except Exception:
+            health_detail["database"] = "error"
+            health_detail["status"] = "degraded"
+        return health_detail
+
+    # H15: 僵尸任务恢复 - 启动时将 RUNNING 状态的任务标记为 FAILED
+    def _recover_zombie_tasks():
+        """将服务器重启前卡在 RUNNING 状态的任务标记为失败"""
+        try:
+            from ..database import get_db_manager
+            db = get_db_manager()
+            count = db.execute(
+                "UPDATE analysis_tasks SET status = 'failed', "
+                "error_message = '服务器重启，任务被中断' "
+                "WHERE status IN ('running', 'pending')"
+            )
+            if count > 0:
+                logger.warning(f"僵尸任务恢复: 将 {count} 个卡死任务标记为 failed")
+        except Exception as e:
+            logger.error(f"僵尸任务恢复失败: {e}")
+
+    _recover_zombie_tasks()
 
     logger.info(f"FastAPI 应用创建完成 (环境: {security_config.environment})")
     return app

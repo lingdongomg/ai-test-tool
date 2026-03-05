@@ -8,6 +8,13 @@
           <template #icon><add-icon /></template>
           添加知识
         </t-button>
+        <t-button @click="showLearnDialog = true">
+          <template #icon><add-icon /></template>
+          从文本学习
+        </t-button>
+        <t-button @click="handleRebuildIndex" :loading="rebuildingIndex">
+          重建索引
+        </t-button>
         <t-button @click="refreshList">
           <template #icon><refresh-icon /></template>
           刷新
@@ -16,7 +23,7 @@
     </div>
 
     <!-- 统计信息 -->
-    <t-row :gutter="20" class="stats-row">
+    <t-row :gutter="20" class="stats-row" v-loading="statsLoading">
       <t-col :span="6">
         <t-card hover class="stat-card">
           <div class="stat-value">{{ statistics.total || 0 }}</div>
@@ -62,10 +69,10 @@
           </t-select>
         </t-form-item>
         <t-form-item label="标签">
-          <t-input v-model="filters.tags" placeholder="多个用逗号分隔" style="width: 200px" />
+          <t-input v-model="filters.tags" placeholder="多个用逗号分隔" clearable style="width: 200px" @clear="handleSearch" />
         </t-form-item>
         <t-form-item label="关键词">
-          <t-input v-model="filters.keyword" placeholder="搜索标题或内容" style="width: 200px" />
+          <t-input v-model="filters.keyword" placeholder="搜索标题或内容" clearable style="width: 200px" @clear="handleSearch" />
         </t-form-item>
         <t-form-item>
           <t-button theme="primary" @click="handleSearch">搜索</t-button>
@@ -77,6 +84,12 @@
     <!-- 知识列表 -->
     <t-card class="list-card">
       <t-table :data="knowledgeList" :loading="loading" stripe>
+        <template #empty>
+          <div style="padding: 48px 0; text-align: center; color: var(--td-text-color-placeholder);">
+            <p style="font-size: 14px; margin-bottom: 8px;">暂无知识条目</p>
+            <p style="font-size: 12px;">点击"添加知识"手动录入，或使用"从文本学习"自动提取知识</p>
+          </div>
+        </template>
         <t-table-column prop="title" label="标题" min-width="200">
           <template #cell="{ row }">
             <t-link theme="primary" @click="showDetail(row)">{{ row.title }}</t-link>
@@ -175,7 +188,7 @@
         </t-form-item>
       </t-form>
       <template #footer>
-        <t-button @click="showCreateDialog = false">取消</t-button>
+        <t-button @click="cancelCreateDialog">取消</t-button>
         <t-button theme="primary" @click="saveKnowledge" :loading="saving">保存</t-button>
       </template>
     </t-dialog>
@@ -209,6 +222,34 @@
         </div>
       </div>
     </t-dialog>
+
+    <!-- 从文本学习对话框 -->
+    <t-dialog
+      v-model:visible="showLearnDialog"
+      header="从文本学习知识"
+      width="600px"
+    >
+      <t-form :data="learnForm" label-width="100px">
+        <t-form-item label="文本内容" required>
+          <t-textarea
+            v-model="learnForm.content"
+            :rows="8"
+            placeholder="粘贴日志片段、API文档、错误信息等文本，系统将自动提取知识"
+          />
+        </t-form-item>
+        <t-form-item label="来源说明">
+          <t-input v-model="learnForm.source_ref" placeholder="可选，如：生产日志 2024-01" />
+        </t-form-item>
+        <t-form-item label="自动审核">
+          <t-switch v-model="learnForm.auto_approve" />
+          <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">高置信度知识自动通过审核</span>
+        </t-form-item>
+      </t-form>
+      <template #footer>
+        <t-button @click="showLearnDialog = false">取消</t-button>
+        <t-button theme="primary" @click="handleLearn" :loading="learning">开始学习</t-button>
+      </template>
+    </t-dialog>
   </div>
 </template>
 
@@ -221,10 +262,14 @@ import { knowledgeApi } from '../../api/v2'
 // 状态
 const loading = ref(false)
 const saving = ref(false)
+const learning = ref(false)
+const rebuildingIndex = ref(false)
+const statsLoading = ref(false)
 const knowledgeList = ref<any[]>([])
 const statistics = ref<any>({})
 const showCreateDialog = ref(false)
 const showDetailDialog = ref(false)
+const showLearnDialog = ref(false)
 const editingKnowledge = ref<any>(null)
 const detailKnowledge = ref<any>(null)
 
@@ -290,7 +335,8 @@ const loadList = async () => {
     knowledgeList.value = data.items || []
     pagination.total = data.total || 0
   } catch (error) {
-    // axios 拦截器已处理错误提示
+    console.error('加载知识列表失败:', error)
+    MessagePlugin.error('加载知识列表失败')
   } finally {
     loading.value = false
   }
@@ -298,10 +344,14 @@ const loadList = async () => {
 
 // 加载统计
 const loadStatistics = async () => {
+  statsLoading.value = true
   try {
     statistics.value = await knowledgeApi.getStatistics()
   } catch (error) {
     console.error('Failed to load statistics', error)
+    MessagePlugin.error('加载统计数据失败')
+  } finally {
+    statsLoading.value = false
   }
 }
 
@@ -374,8 +424,9 @@ const saveKnowledge = async () => {
     showCreateDialog.value = false
     resetForm()
     refreshList()
-  } catch (error) {
-    // axios 拦截器已处理错误提示
+    } catch (error) {
+    console.error('保存知识失败:', error)
+    MessagePlugin.error('保存知识失败')
   } finally {
     saving.value = false
   }
@@ -392,7 +443,8 @@ const deleteKnowledge = async (row: any) => {
         MessagePlugin.success('删除成功')
         refreshList()
       } catch (error) {
-        // axios 拦截器已处理错误提示
+        console.error('删除知识失败:', error)
+        MessagePlugin.error('删除知识失败')
       }
     },
     onClose: () => {
@@ -411,6 +463,55 @@ const resetForm = () => {
   formData.scope = ''
   formData.priority = 0
   formData.tags = []
+}
+
+const cancelCreateDialog = () => {
+  showCreateDialog.value = false
+  resetForm()
+}
+
+// 从文本学习
+const learnForm = reactive({
+  content: '',
+  source_ref: '',
+  auto_approve: true
+})
+
+const handleLearn = async () => {
+  if (!learnForm.content.trim()) {
+    MessagePlugin.warning('请输入文本内容')
+    return
+  }
+  learning.value = true
+  try {
+    await knowledgeApi.learn({
+      content: learnForm.content,
+      source_ref: learnForm.source_ref || undefined,
+      auto_approve: learnForm.auto_approve
+    })
+    MessagePlugin.success('知识学习完成')
+    showLearnDialog.value = false
+    learnForm.content = ''
+    learnForm.source_ref = ''
+    refreshList()
+  } catch (error) {
+    MessagePlugin.error('知识学习失败')
+  } finally {
+    learning.value = false
+  }
+}
+
+// 重建索引
+const handleRebuildIndex = async () => {
+  rebuildingIndex.value = true
+  try {
+    const res: any = await knowledgeApi.rebuildIndex()
+    MessagePlugin.success(res.message || '索引重建完成')
+  } catch (error) {
+    MessagePlugin.error('索引重建失败')
+  } finally {
+    rebuildingIndex.value = false
+  }
 }
 
 // 初始化

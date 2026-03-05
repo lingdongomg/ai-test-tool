@@ -4,6 +4,7 @@
 """
 
 import json
+import asyncio
 from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from pydantic import BaseModel, Field
@@ -15,7 +16,10 @@ from ...exceptions import FileUploadError
 from ...utils.file_validator import validate_upload_file, validate_upload_file_content, sanitize_filename
 from ..dependencies import get_database, get_api_endpoint_repository, get_api_tag_repository
 
+from ...utils.logger import get_logger
+
 router = APIRouter()
+_logger = get_logger()
 
 # JSON 文件专用验证参数
 JSON_ALLOWED_EXTENSIONS = {".json"}
@@ -145,6 +149,9 @@ async def import_file(
         counts = _save_import_result_with_strategy(result, safe_filename, strategy, db, endpoint_repo, tag_repo)
         created_count, updated_count, skipped_count, deleted_count = counts
 
+    # 异步触发知识学习（从 API 文档中提取知识）
+    asyncio.create_task(_trigger_knowledge_from_import(data, safe_filename))
+
     return ImportResponse(
         success=True,
         message=f"成功导入 {result.endpoint_count} 个接口，新增 {created_count}，更新 {updated_count}，跳过 {skipped_count}，删除 {deleted_count}",
@@ -194,7 +201,10 @@ async def import_json(
         strategy = UpdateStrategy(request.update_strategy)
         counts = _save_import_result_with_strategy(result, request.source_name, strategy, db, endpoint_repo, tag_repo)
         created_count, updated_count, skipped_count, deleted_count = counts
-    
+
+    # 异步触发知识学习
+    asyncio.create_task(_trigger_knowledge_from_import(request.data, request.source_name))
+
     return ImportResponse(
         success=True,
         message=f"成功导入 {result.endpoint_count} 个接口，新增 {created_count}，更新 {updated_count}，跳过 {skipped_count}，删除 {deleted_count}",
@@ -399,7 +409,7 @@ def _save_import_result_with_strategy(
     tag_repo: ApiTagRepository,
 ) -> tuple[int, int, int, int]:
     """
-    使用指定策略保存导入结果
+    使用指定策略保存导入结果（H5: 在事务中执行所有写操作）
 
     Returns:
         (created_count, updated_count, skipped_count, deleted_count)
@@ -411,50 +421,64 @@ def _save_import_result_with_strategy(
     skipped_count = 0
     deleted_count = 0
     
-    # 保存标签
-    for tag_name in result.tags:
-        # 截断标签名，api_tags.name 是 VARCHAR(50)
-        tag_name_truncated = (tag_name or "")[:50]
-        existing = db.fetch_one("SELECT id FROM api_tags WHERE name = %s", (tag_name_truncated,))
-        if not existing:
-            db.execute(
-                "INSERT INTO api_tags (name, description) VALUES (%s, %s)",
-                (tag_name_truncated, f"从 {source_file} 导入"[:255])
+    # H5: 使用 get_cursor 上下文管理器确保整个导入在一个事务中
+    conn = db._get_connection()
+    cursor = conn.cursor()
+    try:
+        # 保存标签
+        for tag_name in result.tags:
+            tag_name_truncated = (tag_name or "")[:50]
+            cursor.execute(
+                "SELECT id FROM api_tags WHERE name = ?",
+                (tag_name_truncated,)
             )
-    
-    # 获取现有接口
-    existing_endpoints = _get_existing_endpoints(db)
-    
-    # 应用导入策略
-    to_create, to_update, to_delete_ids = importer.apply_import(
-        result.endpoints, existing_endpoints, strategy
-    )
-    
-    # 创建新接口
-    for endpoint in to_create:
-        _create_endpoint(db, endpoint, source_file)
-        created_count += 1
-    
-    # 更新已有接口
-    for endpoint in to_update:
-        _update_endpoint(db, endpoint, source_file)
-        updated_count += 1
-    
-    # 删除接口（仅 replace 策略）
-    for endpoint_id in to_delete_ids:
-        db.execute("DELETE FROM api_endpoint_tags WHERE endpoint_id = %s", (endpoint_id,))
-        db.execute("DELETE FROM api_endpoints WHERE endpoint_id = %s", (endpoint_id,))
-        deleted_count += 1
-    
-    # 计算跳过数量
-    total_existing_keys = {f"{e.method.upper()}:{e.path}" for e in existing_endpoints}
-    for endpoint in result.endpoints:
-        key = f"{endpoint.method.upper()}:{endpoint.path}"
-        if key in total_existing_keys:
-            if strategy == UpdateStrategy.SKIP:
-                skipped_count += 1
-            elif endpoint not in to_update:
-                skipped_count += 1  # 未变更的接口
+            existing = cursor.fetchone()
+            if not existing:
+                cursor.execute(
+                    "INSERT INTO api_tags (name, description) VALUES (?, ?)",
+                    (tag_name_truncated, f"从 {source_file} 导入"[:255])
+                )
+        
+        # 获取现有接口
+        existing_endpoints = _get_existing_endpoints(db)
+        
+        # 应用导入策略
+        to_create, to_update, to_delete_ids = importer.apply_import(
+            result.endpoints, existing_endpoints, strategy
+        )
+        
+        # 创建新接口
+        for endpoint in to_create:
+            _create_endpoint(db, endpoint, source_file)
+            created_count += 1
+        
+        # 更新已有接口
+        for endpoint in to_update:
+            _update_endpoint(db, endpoint, source_file)
+            updated_count += 1
+        
+        # 删除接口（仅 replace 策略）
+        for endpoint_id in to_delete_ids:
+            db.execute("DELETE FROM api_endpoint_tags WHERE endpoint_id = %s", (endpoint_id,))
+            db.execute("DELETE FROM api_endpoints WHERE endpoint_id = %s", (endpoint_id,))
+            deleted_count += 1
+        
+        # 计算跳过数量
+        total_existing_keys = {f"{e.method.upper()}:{e.path}" for e in existing_endpoints}
+        for endpoint in result.endpoints:
+            key = f"{endpoint.method.upper()}:{endpoint.path}"
+            if key in total_existing_keys:
+                if strategy == UpdateStrategy.SKIP:
+                    skipped_count += 1
+                elif endpoint not in to_update:
+                    skipped_count += 1
+        
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
     
     return created_count, updated_count, skipped_count, deleted_count
 
@@ -553,3 +577,24 @@ def _endpoint_to_dict(endpoint: Any) -> dict[str, Any]:
         "responses": endpoint.responses or {},
         "security": endpoint.security if hasattr(endpoint, 'security') else [],
     }
+
+
+async def _trigger_knowledge_from_import(api_doc: dict, source_file: str):
+    """从导入的 API 文档中异步提取知识"""
+    try:
+        from ..dependencies import get_knowledge_learner
+        learner = get_knowledge_learner()
+        suggestions = learner.extract_from_api_doc(api_doc, source_file)
+        if not suggestions:
+            return
+        created_ids = []
+        for s in suggestions:
+            if s.confidence < 0.5:
+                continue
+            item = learner.store.create_from_suggestion(s, "api_doc_import")
+            created_ids.append(item.knowledge_id)
+            if s.confidence >= 0.8:
+                learner.store.approve([item.knowledge_id])
+        _logger.info(f"API文档导入知识学习完成（{source_file}），创建 {len(created_ids)} 条知识")
+    except Exception as e:
+        _logger.warning(f"API文档知识学习失败（不影响主流程）: {e}")

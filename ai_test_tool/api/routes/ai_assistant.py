@@ -115,9 +115,8 @@ async def chat_with_ai(
         assistant_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
         message_repo.create(assistant_msg_id, session_id, 'assistant', answer)
 
-        # 更新会话消息计数
-        session_repo.increment_message_count(session_id)
-        session_repo.increment_message_count(session_id)
+        # 更新会话消息计数（user + assistant = 2条消息）
+        session_repo.increment_message_count(session_id, count=2)
 
         return {
             "success": True,

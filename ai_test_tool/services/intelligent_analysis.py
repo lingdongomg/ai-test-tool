@@ -1,5 +1,6 @@
 """
 智能路由分析服务
+该文件内容使用AI生成，注意识别准确性
 
 将路由分发器封装为服务层，便于API调用
 """
@@ -44,6 +45,98 @@ class IntelligentAnalysisService:
             self._router = create_router(llm_provider=self._llm_provider)
         return self._router
 
+    def _enrich_with_knowledge(
+        self,
+        requests: list[dict[str, Any]] | None,
+        user_hint: str
+    ) -> str:
+        """
+        从知识库检索相关上下文，用于增强分析
+
+        Returns:
+            知识上下文字符串，可拼接到 user_hint 中
+        """
+        try:
+            from ..api.dependencies import get_knowledge_retriever, get_rag_context_builder
+            retriever = get_knowledge_retriever()
+            rag_builder = get_rag_context_builder()
+
+            # 从请求中提取 URL 和错误信息
+            urls: list[str] = []
+            errors: list[str] = []
+            if requests:
+                for r in requests[:10]:
+                    url = r.get("url") or r.get("path") or ""
+                    if url:
+                        urls.append(url)
+                    err = r.get("error_message") or r.get("error") or ""
+                    if err:
+                        errors.append(str(err)[:200])
+
+            if not urls and not user_hint:
+                return ""
+
+            results = retriever.retrieve_for_log_analysis(urls, errors if errors else None)
+
+            if not results:
+                return ""
+
+            rag_context = rag_builder.build(results)
+            return rag_context.context_text if not rag_context.is_empty else ""
+        except Exception as e:
+            self.logger.warn(f"知识库检索失败（不影响主流程）: {e}")
+            return ""
+
+    def _save_analysis_to_knowledge(
+        self,
+        response: dict[str, Any],
+        task_id: str
+    ) -> None:
+        """
+        将分析结果中的关键发现写回知识库
+        """
+        try:
+            from ..api.dependencies import get_knowledge_store
+            store = get_knowledge_store()
+
+            analysis = response.get("analysis", {})
+            scenario = response.get("scenario_type", "unknown")
+
+            # 提取摘要作为知识条目
+            summary_parts = []
+            if isinstance(analysis, dict):
+                for key in ("summary", "conclusion", "findings", "description"):
+                    val = analysis.get(key)
+                    if val:
+                        summary_parts.append(str(val)[:500])
+                        break
+
+            if not summary_parts:
+                return
+
+            title = f"[分析结论] {scenario} - {task_id[:20]}"
+            content = "\n".join(summary_parts)
+
+            # 查重
+            existing = store.search(scope=task_id, keyword=scenario, limit=1)
+            if existing:
+                return
+
+            store.create(
+                title=title,
+                content=content,
+                type="test_experience",
+                category="analysis_result",
+                scope=task_id,
+                tags=[scenario],
+                source="auto_analysis",
+                source_ref=task_id,
+                status="active",
+                created_by="intelligent_analysis"
+            )
+        except Exception as e:
+            self.logger.warn(f"分析结果回写知识库失败（不影响主流程）: {e}")
+
     def analyze(
         self,
         log_content: str = "",
@@ -73,12 +166,18 @@ class IntelligentAnalysisService:
         """
         self.logger.start_step("智能路由分析")
 
+        # 从知识库检索相关上下文，增强分析
+        knowledge_context = self._enrich_with_knowledge(requests, user_hint)
+        enriched_hint = user_hint
+        if knowledge_context:
+            enriched_hint = f"{user_hint}\n\n--- 知识库上下文 ---\n{knowledge_context}" if user_hint else knowledge_context
+
         # 执行路由和分析
         decision, results = self.router.route_and_execute(
             log_content=log_content,
             requests=requests,
             metrics=metrics,
-            user_hint=user_hint,
+            user_hint=enriched_hint,
             options=options or {},
             task_id=task_id
         )
@@ -131,6 +230,10 @@ class IntelligentAnalysisService:
             f"{len(results)} 策略执行, "
             f"{len(successful_results)} 成功"
         )
+
+        # 将分析结果写回知识库
+        if successful_results and task_id:
+            self._save_analysis_to_knowledge(response, task_id)
 
         return response
 

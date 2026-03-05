@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from .base import BaseRepository
+from ...utils.sql_security import escape_like_pattern
 from ..models import (
     AIInsight,
     InsightSeverity,
@@ -120,8 +121,9 @@ class AIInsightRepository(BaseRepository[AIInsight]):
         params: list[Any] = []
 
         if keyword:
-            conditions.append("(title LIKE %s OR description LIKE %s)")
-            params.extend([f"%{keyword}%", f"%{keyword}%"])
+            safe_kw = escape_like_pattern(keyword)
+            conditions.append("(title LIKE %s ESCAPE '\\' OR description LIKE %s ESCAPE '\\')")
+            params.extend([f"%{safe_kw}%", f"%{safe_kw}%"])
 
         if severity:
             conditions.append("severity = %s")

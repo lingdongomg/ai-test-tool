@@ -50,6 +50,7 @@ class DatabaseManager:
         self._local = threading.local()
         self._lock = threading.Lock()
         self._initialized = False
+        self._in_transaction = False
 
     def _get_connection(self) -> sqlite3.Connection:
         """获取线程本地的数据库连接"""
@@ -60,6 +61,9 @@ class DatabaseManager:
                 check_same_thread=self.config.check_same_thread,
             )
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA synchronous = NORMAL")
             conn.row_factory = sqlite3.Row
             self._local.connection = conn
         return self._local.connection
@@ -77,12 +81,32 @@ class DatabaseManager:
         cursor = conn.cursor()
         try:
             yield cursor
+            if not self._in_transaction:
+                conn.commit()
+        except Exception as e:
+            if not self._in_transaction:
+                conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+
+    @contextmanager
+    def transaction(self) -> Generator["DatabaseManager", None, None]:
+        """
+        手动事务上下文管理器。
+        在此块内调用的 execute/fetch 方法不会自动提交，
+        仅在块成功结束后统一提交，异常时回滚。
+        """
+        conn = self._get_connection()
+        self._in_transaction = True
+        try:
+            yield self
             conn.commit()
         except Exception as e:
             conn.rollback()
             raise e
         finally:
-            cursor.close()
+            self._in_transaction = False
 
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> int:
         """执行SQL语句"""
@@ -219,7 +243,8 @@ class DatabaseManager:
                 timestamp TEXT,
                 raw_logs TEXT,
                 metadata TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES analysis_tasks(task_id) ON DELETE CASCADE
             )
             """,
             # 接口标签表
@@ -263,7 +288,9 @@ class DatabaseManager:
                 endpoint_id TEXT NOT NULL,
                 tag_id INTEGER NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (endpoint_id, tag_id)
+                PRIMARY KEY (endpoint_id, tag_id),
+                FOREIGN KEY (endpoint_id) REFERENCES api_endpoints(endpoint_id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES api_tags(id) ON DELETE CASCADE
             )
             """,
             # 测试用例文件夹表
@@ -320,7 +347,8 @@ class DatabaseManager:
                 snapshot TEXT NOT NULL,
                 changed_fields TEXT,
                 changed_by TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (case_id) REFERENCES test_cases(case_id) ON DELETE CASCADE
             )
             """,
             # 测试执行批次表
@@ -356,7 +384,9 @@ class DatabaseManager:
                 case_id TEXT NOT NULL,
                 order_index INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (execution_id, case_id)
+                PRIMARY KEY (execution_id, case_id),
+                FOREIGN KEY (execution_id) REFERENCES test_executions(execution_id) ON DELETE CASCADE,
+                FOREIGN KEY (case_id) REFERENCES test_cases(case_id) ON DELETE CASCADE
             )
             """,
             # 测试结果表
@@ -375,7 +405,9 @@ class DatabaseManager:
                 assertion_results TEXT,
                 ai_analysis TEXT,
                 executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (case_id) REFERENCES test_cases(case_id) ON DELETE CASCADE,
+                FOREIGN KEY (execution_id) REFERENCES test_executions(execution_id) ON DELETE CASCADE
             )
             """,
             # 分析报告表
@@ -383,16 +415,17 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS analysis_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT NOT NULL,
-                report_type TEXT DEFAULT 'analysis',
+                report_type TEXT DEFAULT 'analysis' CHECK(report_type IN ('analysis', 'test', 'summary', 'insight', 'anomaly')),
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
-                format TEXT DEFAULT 'markdown',
+                format TEXT DEFAULT 'markdown' CHECK(format IN ('markdown', 'html', 'json')),
                 statistics TEXT,
                 issues TEXT,
                 recommendations TEXT,
-                severity TEXT DEFAULT 'medium',
+                severity TEXT DEFAULT 'medium' CHECK(severity IN ('high', 'medium', 'low')),
                 metadata TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES analysis_tasks(task_id) ON DELETE CASCADE
             )
             """,
             # 测试场景表
@@ -439,7 +472,8 @@ class DatabaseManager:
                 is_enabled INTEGER DEFAULT 1,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (scenario_id, step_id)
+                UNIQUE (scenario_id, step_id),
+                FOREIGN KEY (scenario_id) REFERENCES test_scenarios(scenario_id) ON DELETE CASCADE
             )
             """,
             # 场景执行记录表
@@ -461,7 +495,8 @@ class DatabaseManager:
                 error_message TEXT,
                 started_at TEXT,
                 completed_at TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scenario_id) REFERENCES test_scenarios(scenario_id) ON DELETE CASCADE
             )
             """,
             # 步骤执行结果表
@@ -482,15 +517,32 @@ class DatabaseManager:
                 extracted_variables TEXT,
                 assertion_results TEXT,
                 error_message TEXT,
-                executed_at TEXT DEFAULT CURRENT_TIMESTAMP
+                executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (execution_id) REFERENCES scenario_executions(execution_id) ON DELETE CASCADE
             )
             """,
+        ]
+
+        # 索引语句
+        indexes_sql = [
+            "CREATE INDEX IF NOT EXISTS idx_parsed_requests_task_id ON parsed_requests(task_id)",
+            "CREATE INDEX IF NOT EXISTS idx_test_cases_endpoint_id ON test_cases(endpoint_id)",
+            "CREATE INDEX IF NOT EXISTS idx_test_cases_folder_id ON test_cases(folder_id)",
+            "CREATE INDEX IF NOT EXISTS idx_test_case_history_case_id ON test_case_history(case_id)",
+            "CREATE INDEX IF NOT EXISTS idx_test_results_case_id ON test_results(case_id)",
+            "CREATE INDEX IF NOT EXISTS idx_test_results_execution_id ON test_results(execution_id)",
+            "CREATE INDEX IF NOT EXISTS idx_analysis_reports_task_id ON analysis_reports(task_id)",
+            "CREATE INDEX IF NOT EXISTS idx_scenario_steps_scenario_id ON scenario_steps(scenario_id)",
+            "CREATE INDEX IF NOT EXISTS idx_scenario_executions_scenario_id ON scenario_executions(scenario_id)",
+            "CREATE INDEX IF NOT EXISTS idx_step_results_execution_id ON step_results(execution_id)",
         ]
         
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             for sql in tables_sql:
+                cursor.execute(sql)
+            for sql in indexes_sql:
                 cursor.execute(sql)
             conn.commit()
         finally:

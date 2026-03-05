@@ -41,14 +41,14 @@ class ChatSessionRepository:
         """
         return self.db.execute(sql, (title, session_id))
 
-    def increment_message_count(self, session_id: str) -> int:
+    def increment_message_count(self, session_id: str, count: int = 1) -> int:
         """增加消息计数"""
         sql = """
             UPDATE chat_sessions
-            SET message_count = message_count + 1, updated_at = CURRENT_TIMESTAMP
+            SET message_count = message_count + %s, updated_at = CURRENT_TIMESTAMP
             WHERE session_id = %s
         """
-        return self.db.execute(sql, (session_id,))
+        return self.db.execute(sql, (count, session_id))
 
     def list_recent(self, limit: int = 20) -> list[dict]:
         """获取最近的会话列表"""

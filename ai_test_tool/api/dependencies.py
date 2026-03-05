@@ -293,6 +293,13 @@ def get_log_anomaly_detector_service():
     return LogAnomalyDetectorService(verbose=True)
 
 
+@lru_cache()
+def get_insights_service():
+    """获取日志洞察服务（单例）"""
+    from ..services.insights import InsightsService
+    return InsightsService()
+
+
 # =====================================================
 # 清除缓存（用于测试）
 # =====================================================
@@ -331,3 +338,4 @@ def clear_dependency_cache():
     get_rag_context_builder.cache_clear()
     get_knowledge_learner.cache_clear()
     get_log_anomaly_detector_service.cache_clear()
+    get_insights_service.cache_clear()

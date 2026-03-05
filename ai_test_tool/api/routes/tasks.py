@@ -161,9 +161,17 @@ async def list_tasks(
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"无效的状态: {status}")
         
-        # 获取总数
-        all_tasks = repo.get_all(limit=10000, offset=0)
-        total = len([t for t in all_tasks if not status or t.status.value == status])
+        # H1: 使用SQL COUNT获取总数，避免加载全部记录到内存
+        from ...database import get_db_manager
+        db = get_db_manager()
+        if status:
+            count_result = db.fetch_one(
+                "SELECT COUNT(*) as cnt FROM analysis_tasks WHERE status = ?",
+                (status,)
+            )
+        else:
+            count_result = db.fetch_one("SELECT COUNT(*) as cnt FROM analysis_tasks")
+        total = count_result['cnt'] if count_result else 0
         
         items = []
         for task in tasks:
@@ -256,10 +264,28 @@ async def upload_and_analyze(
     saved_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}{file_ext}"
     file_path = upload_dir / saved_filename
     
+    # C3: 流式写入并限制文件大小（100MB），避免一次读入内存导致 OOM
+    max_upload_size = 100 * 1024 * 1024
     try:
-        content = await file.read()
+        file_size = 0
+        chunk_size = 1024 * 1024
         with open(file_path, "wb") as f:
-            f.write(content)
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > max_upload_size:
+                    f.close()
+                    os.remove(file_path)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"文件大小超出限制（最大 {max_upload_size // 1024 // 1024}MB）"
+                    )
+                f.write(chunk)
+        content = b""  # 兼容后续 len(content) 引用
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存文件失败: {str(e)}")
     
@@ -275,7 +301,7 @@ async def upload_and_analyze(
             task_id=task_id,
             name=task_name,
             log_file_path=str(file_path),
-            log_file_size=len(content),
+            log_file_size=file_size,
             status=TaskStatus.PENDING,
             created_at=datetime.now()
         )
@@ -392,108 +418,26 @@ async def analyze_content(
             raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
 
 
-@router.post("/{task_id}/run-tests", response_model=TaskResultResponse, summary="执行测试")
-async def run_tests_for_task(
-    task_id: str,
-    request: RunTestsRequest,
-    background_tasks: BackgroundTasks,
-    async_mode: bool = True
-):
+@router.post("/{task_id}/run-tests", summary="执行测试（已废弃）", deprecated=True)
+async def run_tests_for_task(task_id: str, request: RunTestsRequest):
     """
-    对已有任务执行测试
-    
-    - **task_id**: 任务ID
-    - **base_url**: 测试目标URL
-    - **concurrent**: 并发请求数
+    已废弃：请使用 POST /api/v2/development/tests/execute
     """
-    repo = _get_task_repo()
-    task = repo.get_by_id(task_id)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
-    
-    if task.status not in [TaskStatus.COMPLETED, TaskStatus.RUNNING]:
-        raise HTTPException(status_code=400, detail=f"任务状态不允许执行测试: {task.status.value}")
-    
-    # 检查是否有测试用例
-    test_case_repo = _get_test_case_repo()
-    test_cases = test_case_repo.get_by_task(task_id)
-    
-    if not test_cases:
-        raise HTTPException(status_code=400, detail="任务没有测试用例，请先生成测试用例")
-    
-    if async_mode:
-        background_tasks.add_task(
-            _run_tests_task,
-            task_id=task_id,
-            base_url=request.base_url,
-            concurrent=request.concurrent
-        )
-        
-        return TaskResultResponse(
-            task_id=task_id,
-            status="running",
-            test_cases=len(test_cases)
-        )
-    else:
-        try:
-            result = await _execute_tests(
-                task_id=task_id,
-                base_url=request.base_url,
-                concurrent=request.concurrent
-            )
-            return TaskResultResponse(**result)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"执行测试失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="此接口已废弃，请使用 POST /api/v2/development/tests/execute"
+    )
 
 
-@router.post("/{task_id}/generate-cases", response_model=TaskResultResponse, summary="生成测试用例")
-async def generate_test_cases(
-    task_id: str,
-    request: GenerateTestCasesRequest,
-    background_tasks: BackgroundTasks,
-    async_mode: bool = True
-):
+@router.post("/{task_id}/generate-cases", summary="生成测试用例（已废弃）", deprecated=True)
+async def generate_test_cases(task_id: str, request: GenerateTestCasesRequest):
     """
-    为已有任务生成测试用例
-    
-    - **task_id**: 任务ID
-    - **test_strategy**: 测试策略 (comprehensive/quick/security)
+    已废弃：请使用 POST /api/v2/development/tests/generate
     """
-    repo = _get_task_repo()
-    task = repo.get_by_id(task_id)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
-    
-    # 检查是否有解析的请求
-    request_repo = _get_request_repo()
-    requests = request_repo.get_by_task(task_id)
-    
-    if not requests:
-        raise HTTPException(status_code=400, detail="任务没有解析的请求，请先解析日志")
-    
-    if async_mode:
-        background_tasks.add_task(
-            _generate_cases_task,
-            task_id=task_id,
-            test_strategy=request.test_strategy
-        )
-        
-        return TaskResultResponse(
-            task_id=task_id,
-            status="running",
-            parsed_requests=len(requests)
-        )
-    else:
-        try:
-            result = await _execute_generate_cases(
-                task_id=task_id,
-                test_strategy=request.test_strategy
-            )
-            return TaskResultResponse(**result)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"生成测试用例失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="此接口已废弃，请使用 POST /api/v2/development/tests/generate"
+    )
 
 
 @router.get("/{task_id}/result", response_model=TaskResultResponse, summary="获取任务结果")
@@ -745,43 +689,4 @@ def _execute_analysis_sync(
         tool.close()
 
 
-async def _run_tests_task(
-    task_id: str,
-    base_url: str,
-    concurrent: int
-) -> None:
-    """后台执行测试任务（未实现，请使用 /development/tests/execute）"""
-    repo = _get_task_repo()
-    repo.update_status(task_id, TaskStatus.FAILED, error_message="此接口尚未实现，请使用 /api/v2/development/tests/execute")
 
-
-async def _execute_tests(
-    task_id: str,
-    base_url: str,
-    concurrent: int
-) -> dict[str, Any]:
-    """同步执行测试（未实现，请使用 /development/tests/execute）"""
-    raise HTTPException(
-        status_code=501,
-        detail="此接口尚未实现，请使用 /api/v2/development/tests/execute"
-    )
-
-
-async def _generate_cases_task(
-    task_id: str,
-    test_strategy: str
-) -> None:
-    """后台生成测试用例（未实现，请使用 /development/tests/generate）"""
-    repo = _get_task_repo()
-    repo.update_status(task_id, TaskStatus.FAILED, error_message="此接口尚未实现，请使用 /api/v2/development/tests/generate")
-
-
-async def _execute_generate_cases(
-    task_id: str,
-    test_strategy: str
-) -> dict[str, Any]:
-    """同步生成测试用例（未实现，请使用 /development/tests/generate）"""
-    raise HTTPException(
-        status_code=501,
-        detail="此接口尚未实现，请使用 /api/v2/development/tests/generate"
-    )

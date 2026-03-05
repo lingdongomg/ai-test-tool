@@ -64,6 +64,29 @@ class AIAssistantService:
         if self._provider is None:
             self._provider = get_llm_provider()
         return self._provider
+
+    def _persist_insights(self, insights: list['AIInsight']) -> None:
+        """将 AI 洞察持久化到 ai_insights 数据库表"""
+        for insight in insights:
+            try:
+                self.db.execute("""
+                    INSERT OR IGNORE INTO ai_insights
+                    (insight_id, type, title, description, severity, confidence,
+                     details, recommendations, is_resolved, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, %s)
+                """, (
+                    insight.insight_id,
+                    insight.insight_type.value,
+                    insight.title,
+                    insight.description,
+                    insight.severity,
+                    insight.confidence,
+                    json.dumps(insight.details, ensure_ascii=False) if insight.details else None,
+                    json.dumps(insight.recommendations, ensure_ascii=False) if insight.recommendations else None,
+                    insight.created_at.isoformat()
+                ))
+            except Exception as e:
+                self.logger.warn(f"持久化洞察失败: {e}")
     
     # ==================== 功能1: 接口变更检测 ====================
     
@@ -149,6 +172,7 @@ class AIAssistantService:
         
         self.logger.end_step(f"发现 {len(insights)} 个变更")
         
+        self._persist_insights(insights)
         return insights
     
     def _compare_endpoints(
@@ -413,6 +437,7 @@ class AIAssistantService:
         
         self.logger.end_step(f"发现 {len(insights)} 个性能洞察")
         
+        self._persist_insights(insights)
         return insights
     
     # ==================== 功能3: 智能测试建议 ====================
@@ -441,6 +466,7 @@ class AIAssistantService:
         
         self.logger.end_step(f"生成 {len(insights)} 条建议")
         
+        self._persist_insights(insights)
         return insights
     
     def analyze_coverage_gaps(self) -> list[AIInsight]:
@@ -448,6 +474,7 @@ class AIAssistantService:
         self.logger.start_step("分析覆盖率缺口")
         insights = self._analyze_coverage_gaps()
         self.logger.end_step(f"发现 {len(insights)} 个覆盖率问题")
+        self._persist_insights(insights)
         return insights
     
     def identify_high_risk_endpoints(self) -> list[AIInsight]:
@@ -455,6 +482,7 @@ class AIAssistantService:
         self.logger.start_step("识别高风险接口")
         insights = self._analyze_high_risk_endpoints()
         self.logger.end_step(f"发现 {len(insights)} 个高风险接口")
+        self._persist_insights(insights)
         return insights
     
     def _analyze_coverage_gaps(self) -> list[AIInsight]:

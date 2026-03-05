@@ -1,7 +1,7 @@
 <template>
   <div class="requests-page">
     <!-- 统计卡片 -->
-    <t-row :gutter="[16, 16]" class="stats-row">
+    <t-row :gutter="[16, 16]" class="stats-row" v-loading="statsLoading">
       <t-col :xs="12" :sm="6">
         <t-card class="stat-card">
           <div class="stat-item">
@@ -46,6 +46,7 @@
             clearable
             style="width: 280px;"
             @enter="handleSearch"
+            @clear="handleSearch"
           >
             <template #prefix-icon><SearchIcon /></template>
           </t-input>
@@ -116,6 +117,7 @@
         <template #op="{ row }">
           <t-space>
             <t-link theme="primary" @click="handleView(row)">详情</t-link>
+            <t-link theme="primary" @click="handleEdit(row)">编辑</t-link>
             <t-link theme="primary" @click="handleCheck(row)">检查</t-link>
             <t-popconfirm content="确定删除？" @confirm="handleDelete(row)">
               <t-link theme="danger">删除</t-link>
@@ -264,6 +266,7 @@ import { monitoringApi, insightsApi } from '../../api/v2'
 const requests = ref<any[]>([])
 const statistics = ref<any>({})
 const loading = ref(false)
+const statsLoading = ref(false)
 const availableTasks = ref<any[]>([])
 
 // 筛选
@@ -314,7 +317,7 @@ const columns = [
   { colKey: 'consecutive_failures', title: '连续失败', width: 120 },
   { colKey: 'last_check_at', title: '上次检查', width: 160 },
   { colKey: 'is_enabled', title: '启用', width: 80 },
-  { colKey: 'op', title: '操作', width: 160, fixed: 'right' }
+  { colKey: 'op', title: '操作', width: 200, fixed: 'right' }
 ]
 
 // 加载数据
@@ -331,16 +334,21 @@ const loadRequests = async () => {
     pagination.total = res.total || 0
   } catch (error) {
     console.error('加载监控请求失败:', error)
+    MessagePlugin.error('加载监控请求失败')
   } finally {
     loading.value = false
   }
 }
 
 const loadStatistics = async () => {
+  statsLoading.value = true
   try {
     statistics.value = await monitoringApi.getStatistics()
   } catch (error) {
     console.error('加载统计数据失败:', error)
+    MessagePlugin.error('加载统计数据失败')
+  } finally {
+    statsLoading.value = false
   }
 }
 
@@ -386,14 +394,37 @@ const handleAdd = () => {
   editDialogVisible.value = true
 }
 
+// 编辑
+const handleEdit = (row: any) => {
+  editMode.value = 'edit'
+  Object.assign(editForm, {
+    request_id: row.request_id,
+    method: row.method || 'GET',
+    url: row.url || '',
+    headers_str: row.headers ? (typeof row.headers === 'string' ? row.headers : JSON.stringify(row.headers, null, 2)) : '',
+    body: row.body || '',
+    expected_status_code: row.expected_status_code || 200,
+    tags_str: Array.isArray(row.tags) ? row.tags.join(', ') : (typeof row.tags === 'string' ? (() => { try { return JSON.parse(row.tags).join(', ') } catch { return row.tags } })() : '')
+  })
+  editDialogVisible.value = true
+}
+
 // 保存
 const confirmSave = async () => {
   saving.value = true
   try {
+    let headers
+    try {
+      headers = editForm.headers_str ? JSON.parse(editForm.headers_str) : undefined
+    } catch {
+      MessagePlugin.warning('请求头 JSON 格式不正确')
+      saving.value = false
+      return
+    }
     const data = {
       method: editForm.method,
       url: editForm.url,
-      headers: editForm.headers_str ? JSON.parse(editForm.headers_str) : undefined,
+      headers,
       body: editForm.body || undefined,
       expected_status_code: editForm.expected_status_code,
       tags: editForm.tags_str ? editForm.tags_str.split(',').map(t => t.trim()) : undefined
@@ -412,6 +443,7 @@ const confirmSave = async () => {
     loadStatistics()
   } catch (error) {
     console.error('保存失败:', error)
+    MessagePlugin.error('保存失败')
   } finally {
     saving.value = false
   }
@@ -446,6 +478,7 @@ const handleCheck = async (row: any) => {
     loadRequests()
   } catch (error) {
     console.error('检查失败:', error)
+    MessagePlugin.error('检查失败')
   }
 }
 
@@ -456,6 +489,7 @@ const handleToggle = async (row: any, enabled: boolean) => {
     row.is_enabled = enabled
   } catch (error) {
     console.error('切换失败:', error)
+    MessagePlugin.error('切换状态失败')
   }
 }
 
@@ -468,6 +502,7 @@ const handleDelete = async (row: any) => {
     loadStatistics()
   } catch (error) {
     console.error('删除失败:', error)
+    MessagePlugin.error('删除失败')
   }
 }
 
@@ -493,6 +528,7 @@ const confirmExtract = async () => {
     loadStatistics()
   } catch (error) {
     console.error('提取失败:', error)
+    MessagePlugin.error('提取失败')
   } finally {
     extracting.value = false
   }

@@ -50,7 +50,7 @@ async def get_dashboard_stats(db: DatabaseManager = Depends(get_database)):
             (SELECT COUNT(*) FROM test_cases WHERE is_enabled = 1) as enabled_cases,
             -- 覆盖率统计
             (SELECT COUNT(*) FROM api_endpoints e
-             WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.case_id LIKE (e.endpoint_id || '%'))) as covered_endpoints,
+             WHERE EXISTS (SELECT 1 FROM test_cases tc WHERE tc.endpoint_id = e.endpoint_id)) as covered_endpoints,
             -- 健康状态统计
             (SELECT COUNT(*) FROM production_requests) as total_monitors,
             (SELECT COUNT(*) FROM production_requests WHERE is_enabled = 1) as enabled_monitors,

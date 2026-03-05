@@ -157,43 +157,49 @@ async def execute_tests(
         total_duration = sum(r.actual_response_time_ms for r in results)
         completed_at = datetime.now().isoformat()
 
-        # 持久化每条用例的执行结果到 test_results 表
-        for r in results:
-            db.execute("""
-                INSERT INTO test_results
-                (case_id, execution_id, result_type, status,
-                 actual_status_code, actual_response_time_ms,
-                 actual_response_body, actual_headers,
-                 error_message, assertion_results, executed_at)
-                VALUES (%s, %s, 'test', %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                r.test_case_id,
-                execution_id,
-                r.status.value,
-                r.actual_status_code,
-                r.actual_response_time_ms,
-                (r.actual_response_body or '')[:5000],
-                json.dumps(r.actual_headers, ensure_ascii=False) if r.actual_headers else None,
-                r.error_message or None,
-                json.dumps(r.validation_results, ensure_ascii=False) if r.validation_results else None,
-                completed_at
-            ))
+        # H6: 在事务中持久化所有执行结果
+        with db.transaction():
+            # 持久化每条用例的执行结果到 test_results 表
+            for r in results:
+                db.execute("""
+                    INSERT INTO test_results
+                    (case_id, execution_id, result_type, status,
+                     actual_status_code, actual_response_time_ms,
+                     actual_response_body, actual_headers,
+                     error_message, assertion_results, executed_at)
+                    VALUES (%s, %s, 'test', %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    r.test_case_id,
+                    execution_id,
+                    r.status.value,
+                    r.actual_status_code,
+                    r.actual_response_time_ms,
+                    (r.actual_response_body or '')[:5000],
+                    json.dumps(r.actual_headers, ensure_ascii=False) if r.actual_headers else None,
+                    r.error_message or None,
+                    json.dumps(r.validation_results, ensure_ascii=False) if r.validation_results else None,
+                    completed_at
+                ))
 
-        # 更新 test_executions 表状态为 completed
-        db.execute("""
-            UPDATE test_executions SET
-                status = 'completed',
-                passed_cases = %s,
-                failed_cases = %s,
-                error_cases = %s,
-                skipped_cases = %s,
-                duration_ms = %s,
-                completed_at = %s
-            WHERE execution_id = %s
-        """, (passed, failed, error, skipped, int(total_duration), completed_at, execution_id))
+            # 更新 test_executions 表状态为 completed
+            db.execute("""
+                UPDATE test_executions SET
+                    status = 'completed',
+                    passed_cases = %s,
+                    failed_cases = %s,
+                    error_cases = %s,
+                    skipped_cases = %s,
+                    duration_ms = %s,
+                    completed_at = %s
+                WHERE execution_id = %s
+            """, (passed, failed, error, skipped, int(total_duration), completed_at, execution_id))
 
         # 转换结果为字典
         result_dicts = [r.to_dict() for r in results]
+
+        # 异步触发知识学习（不阻塞主流程）
+        import asyncio
+        asyncio.create_task(_trigger_knowledge_from_execution(results, execution_id))
 
         return {
             "success": True,
@@ -397,3 +403,25 @@ async def get_development_statistics(db: DatabaseManager = Depends(get_database)
             ) if recent_stats and recent_stats['total_executions'] else 0
         }
     }
+
+
+async def _trigger_knowledge_from_execution(results, execution_id: str):
+    """从测试执行结果中异步提取知识（不阻塞主流程）"""
+    try:
+        from ...dependencies import get_knowledge_learner
+        learner = get_knowledge_learner()
+        result_dicts = [r.to_dict() for r in results]
+        suggestions = learner.extract_from_test_results(result_dicts, execution_id)
+        if not suggestions:
+            return
+        created_ids = []
+        for s in suggestions:
+            if s.confidence < 0.5:
+                continue
+            item = learner.store.create_from_suggestion(s, "test_execution")
+            created_ids.append(item.knowledge_id)
+            if s.confidence >= 0.8:
+                learner.store.approve([item.knowledge_id])
+        logger.info(f"测试执行 {execution_id} 知识学习完成，创建 {len(created_ids)} 条知识")
+    except Exception as e:
+        logger.warning(f"测试执行知识学习失败（不影响主流程）: {e}")

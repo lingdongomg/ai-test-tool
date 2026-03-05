@@ -202,20 +202,20 @@ defineExpose({
 }
 
 .error-icon {
-  color: #e34d59;
+  color: var(--td-error-color, #e34d59);
   margin-bottom: 24px;
 }
 
 .error-title {
   font-size: 24px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.9);
+  color: var(--td-text-color-primary, rgba(0, 0, 0, 0.9));
   margin: 0 0 12px;
 }
 
 .error-message {
   font-size: 14px;
-  color: rgba(0, 0, 0, 0.6);
+  color: var(--td-text-color-secondary, rgba(0, 0, 0, 0.6));
   margin: 0 0 24px;
   line-height: 1.6;
 }
@@ -227,14 +227,14 @@ defineExpose({
 
 .error-stack {
   font-size: 12px;
-  background: #f5f7fa;
+  background: var(--td-bg-color-page, #f5f7fa);
   padding: 12px;
   border-radius: 4px;
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
-  color: #666;
+  color: var(--td-text-color-secondary, #666);
 }
 
 .error-actions {
