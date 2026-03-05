@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from .base import BaseRepository
+from ...utils.sql_security import escape_like_pattern
 from ..models import (
     KnowledgeEntry, KnowledgeHistory, KnowledgeUsage,
     KnowledgeType, KnowledgeStatus, KnowledgeSource,
@@ -132,12 +133,14 @@ class KnowledgeRepository(BaseRepository[KnowledgeEntry]):
             params.append(KnowledgeStatus.ARCHIVED.value)
         
         if scope:
-            conditions.append("(scope = %s OR scope = '' OR scope LIKE %s)")
-            params.extend([scope, f"{scope}%"])
+            safe_scope = escape_like_pattern(scope)
+            conditions.append("(scope = %s OR scope = '' OR scope LIKE %s ESCAPE '\\')")
+            params.extend([scope, f"{safe_scope}%"])
         
         if keyword:
-            conditions.append("(title LIKE %s OR content LIKE %s)")
-            params.extend([f"%{keyword}%", f"%{keyword}%"])
+            safe_kw = escape_like_pattern(keyword)
+            conditions.append("(title LIKE %s ESCAPE '\\' OR content LIKE %s ESCAPE '\\')")
+            params.extend([f"%{safe_kw}%", f"%{safe_kw}%"])
         
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         
@@ -224,12 +227,14 @@ class KnowledgeRepository(BaseRepository[KnowledgeEntry]):
             params.append(KnowledgeStatus.ARCHIVED.value)
 
         if scope:
-            conditions.append("(scope = %s OR scope = '' OR scope LIKE %s)")
-            params.extend([scope, f"{scope}%"])
+            safe_scope = escape_like_pattern(scope)
+            conditions.append("(scope = %s OR scope = '' OR scope LIKE %s ESCAPE '\\')")
+            params.extend([scope, f"{safe_scope}%"])
 
         if keyword:
-            conditions.append("(title LIKE %s OR content LIKE %s)")
-            params.extend([f"%{keyword}%", f"%{keyword}%"])
+            safe_kw = escape_like_pattern(keyword)
+            conditions.append("(title LIKE %s ESCAPE '\\' OR content LIKE %s ESCAPE '\\')")
+            params.extend([f"%{safe_kw}%", f"%{safe_kw}%"])
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 

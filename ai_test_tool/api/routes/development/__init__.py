@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from .endpoints import router as endpoints_router
 from .test_cases import router as test_cases_router
 from .executions import router as executions_router
+from .folders import router as folders_router
 from .schemas import (
     GenerateTestsRequest,
     ExecuteTestsRequest,
@@ -20,7 +21,10 @@ from .schemas import (
 router = APIRouter()
 
 # 包含各子模块的路由
+# 注意：folders_router 必须在 test_cases_router 之前注册，
+# 否则 PUT /tests/move 会被 PUT /tests/{test_case_id} 拦截
 router.include_router(endpoints_router)
+router.include_router(folders_router)
 router.include_router(test_cases_router)
 router.include_router(executions_router)
 

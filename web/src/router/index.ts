@@ -165,8 +165,21 @@ const router = createRouter({
       name: 'Import',
       component: () => import('../views/settings/Import.vue'),
       meta: { title: '文档导入' }
+    },
+
+    // ==================== 404 ====================
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'NotFound',
+      redirect: '/dashboard'
     }
   ]
+})
+
+// 全局导航守卫 - 设置页面标题
+router.afterEach((to) => {
+  const title = (to.meta?.title as string) || 'AI Test Tool'
+  document.title = `${title} - AI Test Tool`
 })
 
 export default router

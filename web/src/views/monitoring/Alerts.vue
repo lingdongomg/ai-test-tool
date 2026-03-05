@@ -26,6 +26,12 @@
         hover
         @page-change="handlePageChange"
       >
+        <template #empty>
+          <div style="padding: 48px 0; text-align: center; color: var(--td-text-color-placeholder);">
+            <p style="font-size: 14px; margin-bottom: 8px;">暂无告警信息</p>
+            <p style="font-size: 12px;">系统运行正常，暂未检测到需要关注的问题</p>
+          </div>
+        </template>
         <template #severity="{ row }">
           <t-tag :theme="getSeverityTheme(row.severity)" size="small">
             {{ getSeverityLabel(row.severity) }}
@@ -96,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { monitoringApi } from '../../api/v2'
 
@@ -118,10 +124,21 @@ const pagination = reactive({
 const detailDrawerVisible = ref(false)
 const currentAlert = ref<any>(null)
 
-// 未处理数量
-const unresolvedCount = computed(() => {
-  return alerts.value.filter(a => !a.is_resolved).length
-})
+// 未处理数量 - 通过独立 API 查询获取准确数
+const unresolvedCount = ref(0)
+
+const loadUnresolvedCount = async () => {
+  try {
+    const res = await monitoringApi.listAlerts({
+      is_resolved: false,
+      page: 1,
+      page_size: 1
+    })
+    unresolvedCount.value = res.total || 0
+  } catch {
+    // ignore
+  }
+}
 
 // 表格列
 const columns = [
@@ -145,12 +162,16 @@ const loadAlerts = async () => {
     pagination.total = res.total || 0
   } catch (error) {
     console.error('加载告警失败:', error)
+    MessagePlugin.error('加载告警失败')
   } finally {
     loading.value = false
   }
 }
 
-onMounted(loadAlerts)
+onMounted(() => {
+  loadAlerts()
+  loadUnresolvedCount()
+})
 
 // 搜索
 const handleSearch = () => {
@@ -177,11 +198,13 @@ const handleResolve = async (row: any) => {
     await monitoringApi.resolveAlert(row.insight_id)
     MessagePlugin.success('已标记为处理')
     row.is_resolved = true
+    loadUnresolvedCount()
     if (detailDrawerVisible.value) {
       currentAlert.value.is_resolved = true
     }
   } catch (error) {
     console.error('标记失败:', error)
+    MessagePlugin.error('标记处理失败')
   }
 }
 

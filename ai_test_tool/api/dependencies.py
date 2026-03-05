@@ -16,6 +16,7 @@ from ..database import get_db_manager, DatabaseManager
 from ..database.repository import (
     TaskRepository,
     RequestRepository,
+    TestFolderRepository,
     TestCaseRepository,
     TestCaseHistoryRepository,
     TestResultRepository,
@@ -73,6 +74,12 @@ def get_task_repository() -> TaskRepository:
 def get_request_repository() -> RequestRepository:
     """获取请求仓库（单例）"""
     return RequestRepository()
+
+
+@lru_cache()
+def get_test_folder_repository() -> TestFolderRepository:
+    """获取测试文件夹仓库（单例）"""
+    return TestFolderRepository()
 
 
 @lru_cache()
@@ -286,6 +293,13 @@ def get_log_anomaly_detector_service():
     return LogAnomalyDetectorService(verbose=True)
 
 
+@lru_cache()
+def get_insights_service():
+    """获取日志洞察服务（单例）"""
+    from ..services.insights import InsightsService
+    return InsightsService()
+
+
 # =====================================================
 # 清除缓存（用于测试）
 # =====================================================
@@ -294,6 +308,7 @@ def clear_dependency_cache():
     """清除所有依赖缓存（用于测试）"""
     get_task_repository.cache_clear()
     get_request_repository.cache_clear()
+    get_test_folder_repository.cache_clear()
     get_test_case_repository.cache_clear()
     get_test_case_history_repository.cache_clear()
     get_test_result_repository.cache_clear()
@@ -323,3 +338,4 @@ def clear_dependency_cache():
     get_rag_context_builder.cache_clear()
     get_knowledge_learner.cache_clear()
     get_log_anomaly_detector_service.cache_clear()
+    get_insights_service.cache_clear()

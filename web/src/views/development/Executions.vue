@@ -36,6 +36,12 @@
         hover
         @page-change="handlePageChange"
       >
+        <template #empty>
+          <div style="padding: 48px 0; text-align: center; color: var(--td-text-color-placeholder);">
+            <p style="font-size: 14px; margin-bottom: 8px;">暂无执行记录</p>
+            <p style="font-size: 12px;">执行测试用例后，记录将显示在这里</p>
+          </div>
+        </template>
         <template #status="{ row }">
           <t-tag :theme="getStatusTheme(row.status)">
             {{ getStatusLabel(row.status) }}
@@ -52,9 +58,9 @@
         </template>
         <template #stats="{ row }">
           <t-space size="small">
-            <t-tag theme="success" variant="light" size="small">通过 {{ row.passed || 0 }}</t-tag>
-            <t-tag theme="danger" variant="light" size="small">失败 {{ row.failed || 0 }}</t-tag>
-            <t-tag theme="default" variant="light" size="small">跳过 {{ row.skipped || 0 }}</t-tag>
+            <t-tag theme="success" variant="light" size="small">通过 {{ row.passed_cases || 0 }}</t-tag>
+            <t-tag theme="danger" variant="light" size="small">失败 {{ row.failed_cases || 0 }}</t-tag>
+            <t-tag theme="default" variant="light" size="small">跳过 {{ row.skipped_cases || 0 }}</t-tag>
           </t-space>
         </template>
         <template #op="{ row }">
@@ -77,23 +83,27 @@
               {{ getStatusLabel(currentExecution.status) }}
             </t-tag>
           </t-descriptions-item>
-          <t-descriptions-item label="总用例数">{{ currentExecution.total }}</t-descriptions-item>
+          <t-descriptions-item label="总用例数">{{ currentExecution.total_cases }}</t-descriptions-item>
           <t-descriptions-item label="通过率">{{ currentExecution.pass_rate }}%</t-descriptions-item>
-          <t-descriptions-item label="执行时间">{{ currentExecution.created_at }}</t-descriptions-item>
+          <t-descriptions-item label="执行时间">{{ currentExecution.started_at }}</t-descriptions-item>
           <t-descriptions-item label="耗时">{{ currentExecution.duration_ms }}ms</t-descriptions-item>
         </t-descriptions>
 
         <t-divider>执行结果</t-divider>
         <t-table
-          :data="currentExecution.results || []"
+          :data="executionResults"
           :columns="resultColumns"
           size="small"
-          row-key="test_case_id"
+          row-key="id"
         >
           <template #status="{ row }">
             <t-tag :theme="getResultStatusTheme(row.status)" size="small">
               {{ row.status }}
             </t-tag>
+          </template>
+          <template #error_message="{ row }">
+            <span v-if="row.error_message" class="error-text">{{ row.error_message }}</span>
+            <span v-else style="color: #999;">-</span>
           </template>
         </t-table>
       </template>
@@ -103,6 +113,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon } from 'tdesign-icons-vue-next'
 import { developmentApi } from '../../api/v2'
 
@@ -123,6 +134,7 @@ const pagination = reactive({
 // 详情
 const detailDrawerVisible = ref(false)
 const currentExecution = ref<any>(null)
+const executionResults = ref<any[]>([])
 
 // 表格列
 const columns = [
@@ -135,10 +147,11 @@ const columns = [
 ]
 
 const resultColumns = [
-  { colKey: 'test_case_name', title: '用例名称', ellipsis: true },
+  { colKey: 'case_name', title: '用例名称', ellipsis: true },
   { colKey: 'status', title: '状态', width: 80 },
-  { colKey: 'response_time_ms', title: '响应时间', width: 100 },
-  { colKey: 'status_code', title: '状态码', width: 80 }
+  { colKey: 'actual_status_code', title: '状态码', width: 80 },
+  { colKey: 'actual_response_time_ms', title: '响应时间(ms)', width: 110 },
+  { colKey: 'error_message', title: '错误信息', ellipsis: true }
 ]
 
 // 加载数据
@@ -154,6 +167,7 @@ const loadExecutions = async () => {
     pagination.total = res.total || 0
   } catch (error) {
     console.error('加载执行记录失败:', error)
+    MessagePlugin.error('加载执行记录失败')
   } finally {
     loading.value = false
   }
@@ -175,9 +189,20 @@ const handlePageChange = (pageInfo: any) => {
 }
 
 // 查看详情
-const handleViewDetail = (row: any) => {
+const handleViewDetail = async (row: any) => {
   currentExecution.value = row
+  executionResults.value = []
   detailDrawerVisible.value = true
+  try {
+    const res = await developmentApi.getExecutionDetail(row.execution_id) as any
+    if (res.execution) {
+      currentExecution.value = { ...row, ...res.execution }
+    }
+    executionResults.value = res.results || []
+  } catch (error) {
+    console.error('加载执行详情失败:', error)
+    MessagePlugin.error('加载执行详情失败')
+  }
 }
 
 // 辅助函数
@@ -237,5 +262,10 @@ const getProgressColor = (rate: number) => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.error-text {
+  color: #e34d59;
+  font-size: 12px;
 }
 </style>

@@ -1,10 +1,26 @@
 /**
  * API v2 - 新架构 API
- * 按三大场景组织
+ * 按三大场景组织，带完整类型注解
  */
 
 import axios, { AxiosResponse, AxiosError } from 'axios'
 import { MessagePlugin } from 'tdesign-vue-next'
+import type {
+  ApiEndpoint,
+  TestCase,
+  TestExecution,
+  TestFolder,
+  AnalysisTask,
+  AnalysisReport,
+  KnowledgeEntry,
+} from '@/types/models'
+import type {
+  PaginatedResponse,
+  ImportResponse,
+  DiffResponse,
+  ChatResponse,
+  StatisticsResponse,
+} from '@/types/api'
 
 const api = axios.create({
   baseURL: '/api/v2',
@@ -27,26 +43,17 @@ api.interceptors.response.use(
 
 // ==================== Dashboard API ====================
 export const dashboardApi = {
-  // 获取核心统计数据
-  getStats: () => api.get('/dashboard/stats'),
-  
-  // 获取近期动态
-  getActivities: (limit?: number) => 
+  getStats: (): Promise<Record<string, any>> => api.get('/dashboard/stats'),
+  getActivities: (limit?: number): Promise<any[]> =>
     api.get('/dashboard/activities', { params: { limit } }),
-  
-  // 获取 AI 洞察
-  getInsights: (limit?: number) => 
+  getInsights: (limit?: number): Promise<any[]> =>
     api.get('/dashboard/insights', { params: { limit } }),
-  
-  // 获取快捷操作
-  getQuickActions: () => api.get('/dashboard/quick-actions'),
-  
-  // 趋势数据
-  getCoverageTrend: (days?: number) => 
+  getQuickActions: (): Promise<any[]> => api.get('/dashboard/quick-actions'),
+  getCoverageTrend: (days?: number): Promise<any> =>
     api.get('/dashboard/trends/coverage', { params: { days } }),
-  getHealthTrend: (days?: number) => 
+  getHealthTrend: (days?: number): Promise<any> =>
     api.get('/dashboard/trends/health', { params: { days } }),
-  getAnomalyTrend: (days?: number) => 
+  getAnomalyTrend: (days?: number): Promise<any> =>
     api.get('/dashboard/trends/anomalies', { params: { days } })
 }
 
@@ -54,208 +61,161 @@ export const dashboardApi = {
 export const developmentApi = {
   // 接口管理
   listEndpoints: (params?: {
-    search?: string
-    method?: string
-    tag_id?: string
-    has_tests?: boolean
-    page?: number
-    page_size?: number
-  }) => api.get('/development/endpoints', { params }),
-  
-  getEndpoint: (endpointId: string) => 
+    search?: string; method?: string; tag_id?: string
+    has_tests?: boolean; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<ApiEndpoint>> => api.get('/development/endpoints', { params }),
+
+  getEndpoint: (endpointId: string): Promise<ApiEndpoint> =>
     api.get(`/development/endpoints/${endpointId}`),
-  
-  // 测试用例生成（异步任务）
+
+  // 测试用例生成
   generateTests: (data: {
-    endpoint_ids?: string[]
-    tag_filter?: string
-    test_types?: string[]
-    use_ai?: boolean
-    skip_existing?: boolean
-  }) => api.post('/development/tests/generate', data),
-  
+    endpoint_ids?: string[]; tag_filter?: string
+    test_types?: string[]; use_ai?: boolean; skip_existing?: boolean
+  }): Promise<{ task_id: string }> => api.post('/development/tests/generate', data),
+
   generateTestsForEndpoint: (endpointId: string, params?: {
-    test_types?: string[]
-    use_ai?: boolean
-  }) => api.post(`/development/tests/generate/${endpointId}`, null, { params }),
-  
-  // 查询生成任务状态
-  getGenerateTaskStatus: (taskId: string) => 
+    test_types?: string[]; use_ai?: boolean
+  }): Promise<{ task_id: string }> => api.post(`/development/tests/generate/${endpointId}`, null, { params }),
+
+  getGenerateTaskStatus: (taskId: string): Promise<AnalysisTask> =>
     api.get(`/development/tests/generate/${taskId}`),
-  
-  // 获取生成任务列表
+
   listGenerateTasks: (params?: {
-    status?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/development/tests/generate-tasks', { params }),
-  
+    status?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<AnalysisTask>> => api.get('/development/tests/generate-tasks', { params }),
+
   // 测试用例管理
   listTests: (params?: {
-    endpoint_id?: string
-    category?: string
-    priority?: string
-    is_enabled?: boolean
-    search?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/development/tests', { params }),
-  
-  getTest: (testCaseId: string) => 
+    endpoint_id?: string; category?: string; priority?: string
+    is_enabled?: boolean; search?: string; folder_id?: string | null
+    page?: number; page_size?: number
+  }): Promise<PaginatedResponse<TestCase>> => api.get('/development/tests', { params }),
+
+  getTest: (testCaseId: string): Promise<TestCase> =>
     api.get(`/development/tests/${testCaseId}`),
-  
-  updateTest: (testCaseId: string, data: {
-    name?: string
-    description?: string
-    category?: string
-    priority?: string
-    headers?: Record<string, any>
-    body?: Record<string, any>
-    query_params?: Record<string, any>
-    expected_status_code?: number
-    expected_response?: Record<string, any>
-    assertions?: any[]
-    max_response_time_ms?: number
-    is_enabled?: boolean
-  }) => api.put(`/development/tests/${testCaseId}`, data),
-  
-  deleteTest: (testCaseId: string) => 
+
+  updateTest: (testCaseId: string, data: Partial<TestCase>): Promise<TestCase> =>
+    api.put(`/development/tests/${testCaseId}`, data),
+
+  deleteTest: (testCaseId: string): Promise<void> =>
     api.delete(`/development/tests/${testCaseId}`),
-  
-  // 复制测试用例
-  copyTest: (testCaseId: string, data?: {
-    name?: string
-    description?: string
-    category?: string
-    priority?: string
-    method?: string
-    url?: string
-    headers?: Record<string, any>
-    body?: Record<string, any>
-    query_params?: Record<string, any>
-    expected_status_code?: number
-    max_response_time_ms?: number
-  }) => api.post(`/development/tests/${testCaseId}/copy`, data),
-  
+
+  copyTest: (testCaseId: string, data?: Partial<TestCase>): Promise<TestCase> =>
+    api.post(`/development/tests/${testCaseId}/copy`, data),
+
+  setTestEnabled: (testCaseId: string, enabled: boolean): Promise<void> =>
+    api.put(`/development/tests/${testCaseId}`, { is_enabled: enabled }),
+
   // 测试执行
   executeTests: (data: {
-    test_case_ids?: string[]
-    endpoint_id?: string
-    tag_filter?: string
-    base_url: string
-    environment?: string
-  }) => api.post('/development/tests/execute', data),
-  
+    test_case_ids?: string[]; endpoint_id?: string; tag_filter?: string
+    base_url: string; environment?: string
+  }): Promise<{ execution_id: string; total: number; passed: number; failed: number; pass_rate: number }> =>
+    api.post('/development/tests/execute', data),
+
   // 执行记录
   listExecutions: (params?: {
-    endpoint_id?: string
-    status?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/development/executions', { params }),
-  
-  // 环境配置
-  listEnvironments: () => api.get('/development/environments'),
-  
-  // 统计数据
-  getStatistics: () => api.get('/development/statistics')
+    endpoint_id?: string; status?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<TestExecution>> => api.get('/development/executions', { params }),
+
+  getExecution: (executionId: string): Promise<TestExecution> =>
+    api.get(`/development/executions/${executionId}`),
+
+  getExecutionDetail: (executionId: string): Promise<TestExecution & { results: any[] }> =>
+    api.get(`/development/executions/${executionId}`),
+
+  listEnvironments: (): Promise<any[]> => api.get('/development/environments'),
+  getStatistics: (): Promise<Record<string, any>> => api.get('/development/statistics'),
+
+  // 文件夹管理
+  listFolders: (): Promise<{ folders: TestFolder[]; uncategorized_count: number }> =>
+    api.get('/development/folders'),
+
+  createFolder: (data: {
+    name: string; parent_id?: string | null; description?: string
+  }): Promise<TestFolder> => api.post('/development/folders', data),
+
+  updateFolder: (folderId: string, data: {
+    name?: string; parent_id?: string | null; sort_order?: number; description?: string
+  }): Promise<TestFolder> => api.put(`/development/folders/${folderId}`, data),
+
+  deleteFolder: (folderId: string): Promise<void> =>
+    api.delete(`/development/folders/${folderId}`),
+
+  autoOrganize: (preview: boolean = true): Promise<any> =>
+    api.post('/development/folders/auto-organize', null, { params: { preview } }),
+
+  moveCases: (data: {
+    case_ids: string[]; folder_id: string | null
+  }): Promise<void> => api.put('/development/tests/move', data),
 }
 
 // ==================== 线上监控 API ====================
 export const monitoringApi = {
-  // 监控请求管理
   listRequests: (params?: {
-    tag?: string
-    is_enabled?: boolean
-    last_status?: string
-    search?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/monitoring/requests', { params }),
-  
-  getRequest: (requestId: string) => 
+    tag?: string; is_enabled?: boolean; last_status?: string
+    search?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<any>> => api.get('/monitoring/requests', { params }),
+
+  getRequest: (requestId: string): Promise<any> =>
     api.get(`/monitoring/requests/${requestId}`),
-  
+
   addRequest: (data: {
-    method: string
-    url: string
-    headers?: Record<string, string>
-    body?: string
-    query_params?: Record<string, string>
-    expected_status_code?: number
-    expected_response_pattern?: string
-    tags?: string[]
-    description?: string
-  }) => api.post('/monitoring/requests', data),
-  
-  updateRequest: (requestId: string, data: any) => 
+    method: string; url: string; headers?: Record<string, string>
+    body?: string; query_params?: Record<string, string>
+    expected_status_code?: number; expected_response_pattern?: string
+    tags?: string[]; description?: string
+  }): Promise<any> => api.post('/monitoring/requests', data),
+
+  updateRequest: (requestId: string, data: any): Promise<any> =>
     api.put(`/monitoring/requests/${requestId}`, data),
-  
-  deleteRequest: (requestId: string) => 
+
+  deleteRequest: (requestId: string): Promise<void> =>
     api.delete(`/monitoring/requests/${requestId}`),
-  
-  toggleRequest: (requestId: string, isEnabled: boolean) => 
+
+  toggleRequest: (requestId: string, isEnabled: boolean): Promise<void> =>
     api.patch(`/monitoring/requests/${requestId}/toggle`, null, { params: { is_enabled: isEnabled } }),
-  
-  // 从日志提取
+
   extractFromLog: (data: {
-    task_id: string
-    min_success_rate?: number
-    max_requests_per_endpoint?: number
-    tags?: string[]
-  }) => api.post('/monitoring/requests/extract', data),
-  
-  // 健康检查
+    task_id: string; min_success_rate?: number
+    max_requests_per_endpoint?: number; tags?: string[]
+  }): Promise<any> => api.post('/monitoring/requests/extract', data),
+
   runHealthCheck: (data: {
-    base_url: string
-    request_ids?: string[]
-    tag_filter?: string
-    use_ai_validation?: boolean
-    timeout_seconds?: number
-    parallel?: number
-  }) => api.post('/monitoring/health-check', data),
-  
+    base_url: string; request_ids?: string[]; tag_filter?: string
+    use_ai_validation?: boolean; timeout_seconds?: number; parallel?: number
+  }): Promise<any> => api.post('/monitoring/health-check', data),
+
   listHealthCheckExecutions: (params?: {
-    status?: string
-    trigger_type?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/monitoring/health-check/executions', { params }),
-  
-  getHealthCheckExecution: (executionId: string) => 
+    status?: string; trigger_type?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<any>> => api.get('/monitoring/health-check/executions', { params }),
+
+  getHealthCheckExecution: (executionId: string): Promise<any> =>
     api.get(`/monitoring/health-check/executions/${executionId}`),
-  
-  // 健康摘要
-  getSummary: (days?: number) => 
+
+  getSummary: (days?: number): Promise<any> =>
     api.get('/monitoring/summary', { params: { days } }),
-  
-  // 统计数据
-  getStatistics: () => api.get('/monitoring/statistics'),
-  
-  // 定时任务配置
-  getScheduleConfig: () => api.get('/monitoring/schedule'),
-  updateScheduleConfig: (config: any) => api.put('/monitoring/schedule', config),
-  
-  // 告警
+
+  getStatistics: (): Promise<Record<string, any>> => api.get('/monitoring/statistics'),
+
+  getScheduleConfig: (): Promise<any> => api.get('/monitoring/schedule'),
+  updateScheduleConfig: (config: any): Promise<any> => api.put('/monitoring/schedule', config),
+
   listAlerts: (params?: {
-    is_resolved?: boolean
-    page?: number
-    page_size?: number
-  }) => api.get('/monitoring/alerts', { params }),
-  
-  resolveAlert: (alertId: string) => 
+    is_resolved?: boolean; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<any>> => api.get('/monitoring/alerts', { params }),
+
+  resolveAlert: (alertId: string): Promise<void> =>
     api.patch(`/monitoring/alerts/${alertId}/resolve`)
 }
 
 // ==================== 日志洞察 API ====================
 export const insightsApi = {
-  // 日志上传
   uploadLog: (file: File, params?: {
-    analysis_type?: string  // anomaly | request
-    detect_types?: string
-    include_ai_analysis?: boolean
-    max_lines?: number | null
-  }) => {
+    analysis_type?: string; detect_types?: string
+    include_ai_analysis?: boolean; max_lines?: number | null
+  }): Promise<AnalysisTask> => {
     const formData = new FormData()
     formData.append('file', file)
     if (params?.analysis_type) formData.append('analysis_type', params.analysis_type)
@@ -265,203 +225,120 @@ export const insightsApi = {
     }
     if (params?.max_lines) formData.append('max_lines', String(params.max_lines))
     return api.post('/insights/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000 // 上传超时 5 分钟
     })
   },
-  
-  // 分析日志
+
   analyzeLog: (data: {
-    task_id?: string
-    log_content?: string
-    include_ai_analysis?: boolean
-    detect_types?: string[]
-  }) => api.post('/insights/analyze', data),
-  
-  // 分析任务
+    task_id?: string; log_content?: string
+    include_ai_analysis?: boolean; detect_types?: string[]
+  }): Promise<any> => api.post('/insights/analyze', data),
+
   listTasks: (params?: {
-    status?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/insights/tasks', { params }),
-  
-  getTask: (taskId: string) => api.get(`/insights/tasks/${taskId}`),
-  
-  deleteTask: (taskId: string) => api.delete(`/insights/tasks/${taskId}`),
-  
-  // 异常检测
+    status?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<AnalysisTask>> => api.get('/insights/tasks', { params }),
+
+  getTask: (taskId: string): Promise<AnalysisTask> => api.get(`/insights/tasks/${taskId}`),
+  deleteTask: (taskId: string): Promise<void> => api.delete(`/insights/tasks/${taskId}`),
+
   detectAnomalies: (data: {
-    task_id?: string
-    log_content?: string
-    include_ai_analysis?: boolean
-    detect_types?: string[]
-  }) => api.post('/insights/detect', data),
-  
-  // 报告管理
+    task_id?: string; log_content?: string
+    include_ai_analysis?: boolean; detect_types?: string[]
+  }): Promise<any> => api.post('/insights/detect', data),
+
   listReports: (params?: {
-    task_id?: string
-    severity?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/insights/reports', { params }),
-  
-  getReport: (reportId: number) => api.get(`/insights/reports/${reportId}`),
-  
-  downloadReport: (reportId: number, format?: string) => 
-    api.get(`/insights/reports/${reportId}/download`, { 
-      params: { format },
-      responseType: 'blob'
-    }),
-  
-  // 趋势
-  getTrends: (days?: number) => api.get('/insights/trends', { params: { days } }),
-  
-  // 统计
-  getStatistics: () => api.get('/insights/statistics')
+    task_id?: string; severity?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<AnalysisReport>> => api.get('/insights/reports', { params }),
+
+  getReport: (reportId: number): Promise<AnalysisReport> => api.get(`/insights/reports/${reportId}`),
+
+  downloadReport: (reportId: number, format?: string): Promise<Blob> =>
+    api.get(`/insights/reports/${reportId}/download`, { params: { format }, responseType: 'blob' }),
+
+  getTrends: (days?: number): Promise<any> => api.get('/insights/trends', { params: { days } }),
+  getStatistics: (): Promise<Record<string, any>> => api.get('/insights/statistics')
 }
 
 // ==================== AI 助手 API ====================
 export const aiApi = {
-  // 对话
   chat: (data: {
-    message: string
-    context?: Record<string, any>
-    session_id?: string
-  }) => api.post('/ai/chat', data),
-  
-  // 生成 Mock 数据
+    message: string; context?: Record<string, any>; session_id?: string
+  }): Promise<ChatResponse> => api.post('/ai/chat', data),
+
   generateMock: (data: {
-    endpoint_id: string
-    count?: number
-    scenario?: string
-  }) => api.post('/ai/generate/mock', data),
-  
-  // 生成测试代码
+    endpoint_id: string; count?: number; scenario?: string
+  }): Promise<any> => api.post('/ai/generate/mock', data),
+
   generateCode: (data: {
-    endpoint_id: string
-    language?: string
-    framework?: string
-    include_comments?: boolean
-  }) => api.post('/ai/generate/code', data),
-  
-  // 智能分析
+    endpoint_id: string; language?: string; framework?: string; include_comments?: boolean
+  }): Promise<{ code: string }> => api.post('/ai/generate/code', data),
+
   analyzePerformance: (data: {
-    type: string
-    target_id?: string
-    days?: number
-  }) => api.post('/ai/analyze/performance', data),
-  
-  analyzeCoverage: () => api.post('/ai/analyze/coverage'),
-  
-  analyzeRisk: () => api.post('/ai/analyze/risk'),
-  
-  // 智能建议
+    type: string; target_id?: string; days?: number
+  }): Promise<any> => api.post('/ai/analyze/performance', data),
+
+  analyzeCoverage: (): Promise<any> => api.post('/ai/analyze/coverage'),
+  analyzeRisk: (): Promise<any> => api.post('/ai/analyze/risk'),
+
   getRecommendations: (params?: {
-    type?: string
-    limit?: number
-  }) => api.get('/ai/recommendations', { params }),
-  
-  // 洞察管理
+    type?: string; limit?: number
+  }): Promise<any[]> => api.get('/ai/recommendations', { params }),
+
   listInsights: (params?: {
-    type?: string
-    severity?: string
-    is_resolved?: boolean
-    page?: number
-    page_size?: number
-  }) => api.get('/ai/insights', { params }),
-  
-  getInsight: (insightId: string) => api.get(`/ai/insights/${insightId}`),
-  
-  resolveInsight: (insightId: string) => 
-    api.patch(`/ai/insights/${insightId}/resolve`),
-  
-  deleteInsight: (insightId: string) => 
-    api.delete(`/ai/insights/${insightId}`),
-  
-  // 统计
-  getStatistics: () => api.get('/ai/statistics')
+    type?: string; severity?: string; is_resolved?: boolean
+    page?: number; page_size?: number
+  }): Promise<PaginatedResponse<any>> => api.get('/ai/insights', { params }),
+
+  getInsight: (insightId: string): Promise<any> => api.get(`/ai/insights/${insightId}`),
+  resolveInsight: (insightId: string): Promise<void> => api.patch(`/ai/insights/${insightId}/resolve`),
+  deleteInsight: (insightId: string): Promise<void> => api.delete(`/ai/insights/${insightId}`),
+  getStatistics: (): Promise<Record<string, any>> => api.get('/ai/statistics')
 }
 
 // ==================== 知识库 API ====================
 export const knowledgeApi = {
-  // 知识列表（分页 + 筛选）
   list: (params?: {
-    type?: string
-    status?: string
-    tags?: string
-    scope?: string
-    keyword?: string
-    page?: number
-    page_size?: number
-  }) => api.get('/knowledge', { params }),
+    type?: string; status?: string; tags?: string; scope?: string
+    keyword?: string; page?: number; page_size?: number
+  }): Promise<PaginatedResponse<KnowledgeEntry>> => api.get('/knowledge', { params }),
 
-  // 待审核列表
-  listPending: (params?: {
-    limit?: number
-  }) => api.get('/knowledge/pending', { params }),
+  listPending: (params?: { limit?: number }): Promise<KnowledgeEntry[]> =>
+    api.get('/knowledge/pending', { params }),
 
-  // 统计信息
-  getStatistics: () => api.get('/knowledge/statistics'),
+  getStatistics: (): Promise<Record<string, any>> => api.get('/knowledge/statistics'),
 
-  // 知识详情
-  get: (knowledgeId: string) => api.get(`/knowledge/${knowledgeId}`),
+  get: (knowledgeId: string): Promise<KnowledgeEntry> => api.get(`/knowledge/${knowledgeId}`),
 
-  // 创建知识
   create: (data: {
-    title: string
-    content: string
-    type?: string
-    category?: string
-    scope?: string
-    priority?: number
-    tags?: string[]
-    metadata?: Record<string, any>
-  }) => api.post('/knowledge', data),
+    title: string; content: string; type?: string; category?: string
+    scope?: string; priority?: number; tags?: string[]; metadata?: Record<string, any>
+  }): Promise<KnowledgeEntry> => api.post('/knowledge', data),
 
-  // 更新知识
-  update: (knowledgeId: string, data: {
-    title?: string
-    content?: string
-    category?: string
-    scope?: string
-    priority?: number
-    tags?: string[]
-    metadata?: Record<string, any>
-  }) => api.put(`/knowledge/${knowledgeId}`, data),
+  update: (knowledgeId: string, data: Partial<KnowledgeEntry>): Promise<KnowledgeEntry> =>
+    api.put(`/knowledge/${knowledgeId}`, data),
 
-  // 删除知识（归档）
-  delete: (knowledgeId: string) => api.delete(`/knowledge/${knowledgeId}`),
+  delete: (knowledgeId: string): Promise<void> => api.delete(`/knowledge/${knowledgeId}`),
 
-  // 批量审核
   review: (data: {
-    knowledge_ids: string[]
-    action: 'approve' | 'reject'
-  }) => api.post('/knowledge/review', data),
+    knowledge_ids: string[]; action: 'approve' | 'reject'
+  }): Promise<{ processed: number }> => api.post('/knowledge/review', data),
 
-  // 语义检索
   search: (data: {
-    query: string
-    types?: string[]
-    tags?: string[]
-    scope?: string
-    top_k?: number
-    min_score?: number
-  }) => api.post('/knowledge/search', data),
+    query: string; types?: string[]; tags?: string[]
+    scope?: string; top_k?: number; min_score?: number
+  }): Promise<any[]> => api.post('/knowledge/search', data),
 
-  // 知识学习
   learn: (data: {
-    content: string
-    source_ref?: string
-    auto_approve?: boolean
-  }) => api.post('/knowledge/learn', data),
+    content: string; source_ref?: string; auto_approve?: boolean
+  }): Promise<KnowledgeEntry> => api.post('/knowledge/learn', data),
 
-  // 重建索引
-  rebuildIndex: () => api.post('/knowledge/rebuild-index'),
+  rebuildIndex: (): Promise<{ message: string }> => api.post('/knowledge/rebuild-index'),
 }
 
 // ==================== 文档导入 API ====================
 export const importApi = {
-  // 上传文件导入
-  uploadFile: (file: File, docType?: string, updateStrategy?: string) => {
+  uploadFile: (file: File, docType?: string, updateStrategy?: string): Promise<ImportResponse> => {
     const formData = new FormData()
     formData.append('file', file)
     if (docType) formData.append('doc_type', docType)
@@ -470,18 +347,13 @@ export const importApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
-  
-  // JSON 数据导入
+
   importJson: (data: {
-    data: any
-    doc_type?: string
-    source_name?: string
-    save_to_db?: boolean
-    update_strategy?: string
-  }) => api.post('/imports/json', data),
-  
-  // 预览导入
-  preview: (file: File, docType?: string) => {
+    data: any; doc_type?: string; source_name?: string
+    save_to_db?: boolean; update_strategy?: string
+  }): Promise<ImportResponse> => api.post('/imports/json', data),
+
+  preview: (file: File, docType?: string): Promise<any> => {
     const formData = new FormData()
     formData.append('file', file)
     if (docType) formData.append('doc_type', docType)
@@ -489,9 +361,8 @@ export const importApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
-  
-  // 对比差异
-  diff: (file: File, docType?: string) => {
+
+  diff: (file: File, docType?: string): Promise<DiffResponse> => {
     const formData = new FormData()
     formData.append('file', file)
     if (docType) formData.append('doc_type', docType)
@@ -499,9 +370,8 @@ export const importApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
-  
-  // 获取支持的格式
-  getSupportedFormats: () => api.get('/imports/supported-formats')
+
+  getSupportedFormats: (): Promise<any> => api.get('/imports/supported-formats')
 }
 
 export default api

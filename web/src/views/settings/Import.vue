@@ -15,7 +15,7 @@
         :action="uploadAction"
         :auto-upload="false"
         :multiple="false"
-        accept=".json"
+        accept=".json,.yaml,.yml"
         theme="custom"
         draggable
         @change="handleFileChange"
@@ -24,7 +24,7 @@
           <CloudUploadIcon class="upload-icon" />
           <div class="upload-text">
             <p class="main">点击或拖拽文件到此处上传</p>
-            <p class="sub">支持 Swagger/OpenAPI、Postman Collection 格式的 JSON 文件</p>
+            <p class="sub">支持 Swagger/OpenAPI、Postman Collection 格式的 JSON、YAML 文件</p>
           </div>
         </div>
       </t-upload>
@@ -263,6 +263,7 @@ const previewImport = async () => {
     diffResult.value = null
   } catch (error) {
     console.error('预览失败:', error)
+    MessagePlugin.error('预览失败')
   } finally {
     previewing.value = false
   }
@@ -278,6 +279,7 @@ const diffImport = async () => {
     previewResult.value = null
   } catch (error) {
     console.error('对比失败:', error)
+    MessagePlugin.error('对比差异失败')
   } finally {
     diffing.value = false
   }
@@ -299,6 +301,7 @@ const doImport = async () => {
     }
   } catch (error) {
     console.error('导入失败:', error)
+    MessagePlugin.error('导入失败')
   } finally {
     importing.value = false
   }

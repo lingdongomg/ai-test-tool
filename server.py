@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 AI测试工具 - API服务启动脚本
+该文件内容使用AI生成，注意识别准确性
 Python 3.13+ 兼容
 """
 
@@ -46,8 +47,32 @@ def main() -> int:
     parser.add_argument(
         '--workers',
         type=int,
-        default=1,
-        help='工作进程数 (默认: 1)'
+        default=int(os.getenv('SERVER_WORKERS', '1')),
+        help='工作进程数 (默认: 1，可通过 SERVER_WORKERS 环境变量配置)'
+    )
+    parser.add_argument(
+        '--log-level',
+        default=os.getenv('LOG_LEVEL', 'info'),
+        choices=['critical', 'error', 'warning', 'info', 'debug'],
+        help='日志级别 (默认: info)'
+    )
+    parser.add_argument(
+        '--access-log',
+        action='store_true',
+        default=os.getenv('ACCESS_LOG', 'true').lower() in ('true', '1'),
+        help='启用访问日志 (默认: 启用)'
+    )
+    parser.add_argument(
+        '--timeout-keep-alive',
+        type=int,
+        default=int(os.getenv('TIMEOUT_KEEP_ALIVE', '5')),
+        help='Keep-alive 超时秒数 (默认: 5)'
+    )
+    parser.add_argument(
+        '--timeout-graceful-shutdown',
+        type=int,
+        default=int(os.getenv('TIMEOUT_GRACEFUL_SHUTDOWN', '30')),
+        help='优雅关闭超时秒数 (默认: 30)'
     )
     
     args = parser.parse_args()
@@ -61,6 +86,7 @@ def main() -> int:
         print(f"启动 AI Test Tool API 服务...")
         print(f"   地址: http://{args.host}:{args.port}")
         print(f"   文档: http://{args.host}:{args.port}/docs")
+        print(f"   workers: {args.workers}, log_level: {args.log_level}")
         
         uvicorn.run(
             "ai_test_tool.api:create_app",
@@ -68,17 +94,26 @@ def main() -> int:
             port=args.port,
             reload=args.reload,
             workers=args.workers if not args.reload else 1,
-            factory=True
+            factory=True,
+            log_level=args.log_level,
+            access_log=args.access_log,
+            timeout_keep_alive=args.timeout_keep_alive,
+            timeout_graceful_shutdown=args.timeout_graceful_shutdown,
         )
         
         return 0
         
     except ImportError as e:
-        print(f"错误: 缺少依赖 - {e}")
-        print("请运行: pip install fastapi uvicorn python-multipart")
+        print(f"错误: 缺少依赖 - {e}", file=sys.stderr)
+        print("请运行: pip install fastapi uvicorn python-multipart", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"启动失败 (端口可能被占用): {e}", file=sys.stderr)
         return 1
     except Exception as e:
-        print(f"启动失败: {e}")
+        import traceback
+        print(f"启动失败: {e}", file=sys.stderr)
+        traceback.print_exc()
         return 1
 
 

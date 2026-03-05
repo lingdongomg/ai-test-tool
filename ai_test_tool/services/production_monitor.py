@@ -144,28 +144,35 @@ class ProductionMonitorService:
     def run_health_check(
         self,
         base_url: str,
+        request_ids: list[str] | None = None,
         tag_filter: str | None = None,
         use_ai_validation: bool = True,
-        timeout_seconds: int = 30
+        timeout_seconds: int = 30,
+        parallel: int = 5
     ) -> dict[str, Any]:
         """
         执行线上健康检查
-        
+
         Args:
             base_url: 目标服务器基础URL
+            request_ids: 指定要检查的请求ID列表（为空时查全部启用请求）
             tag_filter: 按标签筛选
             use_ai_validation: 是否使用AI验证返回结果
             timeout_seconds: 请求超时时间
-            
+            parallel: 并发数（保留参数）
+
         Returns:
             检查结果统计
         """
         import httpx
-        
+
         self.logger.start_step("执行线上健康检查")
-        
+
         # 获取要检查的请求
-        requests = self._get_enabled_requests(tag_filter)
+        if request_ids:
+            requests = self._get_requests_by_ids(request_ids)
+        else:
+            requests = self._get_enabled_requests(tag_filter)
         
         if not requests:
             self.logger.warn("没有启用的监控请求")
@@ -558,7 +565,16 @@ class ProductionMonitorService:
             rows = self.db.fetch_all(sql)
         
         return [dict(row) for row in rows]
-    
+
+    def _get_requests_by_ids(self, request_ids: list[str]) -> list[dict[str, Any]]:
+        """按ID列表获取监控请求"""
+        if not request_ids:
+            return []
+        placeholders = ', '.join(['%s'] * len(request_ids))
+        sql = f"SELECT * FROM production_requests WHERE request_id IN ({placeholders}) ORDER BY url"
+        rows = self.db.fetch_all(sql, tuple(request_ids))
+        return [dict(row) for row in rows]
+
     def _create_execution_record(self, base_url: str, total: int) -> str:
         """创建执行记录"""
         execution_id = hashlib.md5(

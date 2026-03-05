@@ -140,6 +140,7 @@ import {
 } from 'tdesign-icons-vue-next'
 import { aiApi } from '../../api/v2'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 // 对话
 const messages = ref<any[]>([
@@ -288,7 +289,7 @@ const scrollToBottom = () => {
 }
 
 const renderMarkdown = (content: string) => {
-  return marked(content)
+  return DOMPurify.sanitize(marked(content) as string)
 }
 
 function formatTime(date: Date) {

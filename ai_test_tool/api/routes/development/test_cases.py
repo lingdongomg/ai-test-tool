@@ -5,8 +5,6 @@
 
 import json
 import uuid
-import hashlib
-import time
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks, Depends
 
@@ -16,7 +14,7 @@ from ....database.repository import TaskRepository
 from ....database.models.base import TaskStatus
 from ....utils.logger import get_logger
 from ....utils.sql_security import build_safe_like
-from ...dependencies import get_database, get_task_repository
+from ...dependencies import get_database, get_task_repository, get_test_folder_repository
 from .schemas import GenerateTestsRequest, UpdateTestCaseRequest
 
 router = APIRouter()
@@ -46,10 +44,20 @@ def _run_generate_task(task_id: str, request_data: dict):
                 use_ai=use_ai,
                 save_to_db=True
             )
+            metadata = {
+                'total_endpoints': 1,
+                'success_count': 1,
+                'failed_count': 0,
+                'errors': []
+            }
             task_repo.update_counts(
                 task_id,
                 total_requests=1,
                 total_test_cases=len(test_cases)
+            )
+            task_repo.db.execute(
+                "UPDATE analysis_tasks SET metadata = %s WHERE task_id = %s",
+                (json.dumps(metadata, ensure_ascii=False), task_id)
             )
             task_repo.update_status(task_id, TaskStatus.COMPLETED)
         else:
@@ -283,13 +291,25 @@ async def list_test_cases(
     priority: str | None = None,
     is_enabled: bool | None = None,
     search: str | None = None,
+    folder_id: str | None = Query(default=None, description="文件夹ID，'uncategorized'表示未分类"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    db: DatabaseManager = Depends(get_database)
+    db: DatabaseManager = Depends(get_database),
+    folder_repo=Depends(get_test_folder_repository)
 ):
     """获取测试用例列表"""
     conditions = []
     params: list[Any] = []
+
+    if folder_id:
+        if folder_id == 'uncategorized':
+            conditions.append("tc.folder_id IS NULL")
+        else:
+            # 递归包含所有子孙文件夹的用例
+            all_folder_ids = [folder_id] + folder_repo.get_descendant_ids(folder_id)
+            placeholders = ', '.join(['%s'] * len(all_folder_ids))
+            conditions.append(f"tc.folder_id IN ({placeholders})")
+            params.extend(all_folder_ids)
 
     if endpoint_id:
         # test_cases 表没有 endpoint_id 列，通过 case_id 前缀匹配
@@ -444,13 +464,49 @@ async def update_test_case(
     if not updates:
         raise HTTPException(status_code=400, detail="没有要更新的字段")
 
+    # H4: 自增版本号 + 更新时间
+    updates.append("version = version + 1")
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+
+    # 记录变更字段列表
+    changed_fields = []
+    if request.name is not None: changed_fields.append("name")
+    if request.description is not None: changed_fields.append("description")
+    if request.category is not None: changed_fields.append("category")
+    if request.priority is not None: changed_fields.append("priority")
+    if request.method is not None: changed_fields.append("method")
+    if request.url is not None: changed_fields.append("url")
+    if request.headers is not None: changed_fields.append("headers")
+    if request.body is not None: changed_fields.append("body")
+    if request.query_params is not None: changed_fields.append("query_params")
+    if request.expected_status_code is not None: changed_fields.append("expected_status_code")
+    if request.expected_response is not None: changed_fields.append("expected_response")
+    if request.assertions is not None: changed_fields.append("assertions")
+    if request.max_response_time_ms is not None: changed_fields.append("max_response_time_ms")
+    if request.is_enabled is not None: changed_fields.append("is_enabled")
+
     # 执行更新
     params.append(test_case_id)
     sql = f"UPDATE test_cases SET {', '.join(updates)} WHERE case_id = %s"
     db.execute(sql, tuple(params))
 
-    # 返回更新后的数据
+    # 写入历史记录
     updated = db.fetch_one("SELECT * FROM test_cases WHERE case_id = %s", (test_case_id,))
+    if updated:
+        current_version = updated['version'] if updated else 1
+        db.execute("""
+            INSERT INTO test_case_history
+            (case_id, version, change_type, change_summary, snapshot, changed_fields)
+            VALUES (%s, %s, 'update', %s, %s, %s)
+        """, (
+            test_case_id,
+            current_version,
+            f"更新了 {', '.join(changed_fields)}",
+            json.dumps(dict(updated), ensure_ascii=False, default=str),
+            json.dumps(changed_fields, ensure_ascii=False)
+        ))
+
+    # 返回更新后的数据
     if not updated:
         raise HTTPException(status_code=404, detail="更新后查询失败")
     return {
@@ -474,11 +530,9 @@ async def copy_test_case(
 
     original = dict(original)
 
-    # 生成新的 case_id
+    # 生成新的 case_id（使用 uuid 替代 MD5）
     endpoint_id = original['endpoint_id']
-    timestamp = str(int(time.time() * 1000))
-    hash_str = hashlib.md5(timestamp.encode()).hexdigest()[:8]
-    new_case_id = f"{endpoint_id}_{hash_str}"
+    new_case_id = f"{endpoint_id}_{uuid.uuid4().hex[:8]}"
 
     # 准备新用例数据，优先使用请求中的数据
     new_data = {

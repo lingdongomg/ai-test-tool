@@ -3,7 +3,7 @@
  * Vue Composables - 可复用的组合式函数
  */
 
-import { ref, reactive, computed, watch, type Ref } from 'vue'
+import { ref, reactive, computed, watch, onScopeDispose, type Ref } from 'vue'
 
 // =====================================================
 // 分页 Composable
@@ -368,6 +368,9 @@ export function usePolling(options: UsePollingOptions = {}) {
     }
     isPolling.value = false
   }
+
+  // 组件卸载时自动清理，防止内存泄漏
+  onScopeDispose(stop)
 
   return {
     isPolling,

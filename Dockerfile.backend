@@ -1,3 +1,4 @@
+# 该文件内容使用AI生成，注意识别准确性
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -9,6 +10,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source
 COPY ai_test_tool/ ai_test_tool/
 COPY server.py .
+
+# 安全：使用非 root 用户运行
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && chown -R appuser:appgroup /app
+USER appuser
 
 EXPOSE 8000
 

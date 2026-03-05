@@ -61,6 +61,7 @@ class ReportType(Enum):
     TEST = "test"
     SUMMARY = "summary"
     INSIGHT = "insight"
+    ANOMALY = "anomaly"
 
 
 class TriggerType(Enum):

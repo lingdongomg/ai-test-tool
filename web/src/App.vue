@@ -101,6 +101,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 import {
   DashboardIcon,
   ApiIcon,
@@ -116,8 +117,11 @@ import {
 const route = useRoute()
 const router = useRouter()
 
-// 缓存的视图
-const cachedViews = ['Dashboard']
+// ErrorBoundary 引用 - 路由切换时自动重置
+const errorBoundaryRef = ref<InstanceType<typeof ErrorBoundary> | null>(null)
+
+// 缓存的视图 - 列表页均缓存，避免切换时重复加载
+const cachedViews = ['Dashboard', 'DevEndpoints', 'DevTests', 'DevExecutions', 'InsightTasks', 'InsightReports', 'KnowledgeList']
 
 // 展开的菜单
 const expandedMenus = ref<string[]>(['development'])
@@ -224,8 +228,11 @@ const currentTitle = computed(() => {
   return (route.meta?.title as string) || 'AI Test Tool'
 })
 
-// 根据路由自动展开对应菜单
+// 根据路由自动展开对应菜单，并重置 ErrorBoundary
 watch(() => route.path, (path) => {
+  // 路由切换时重置错误边界
+  errorBoundaryRef.value?.reset()
+
   if (path.startsWith('/development') && !expandedMenus.value.includes('development')) {
     expandedMenus.value.push('development')
   }

@@ -1,5 +1,10 @@
 /**
  * 开发自测模块状态管理
+ *
+ * 定位说明：
+ * - 此 Store 用于跨页面共享的全局状态（统计数据、当前选中项等）
+ * - 列表页的数据获取建议直接使用 composables/useList，避免数据流重复
+ * - Store 的 fetch 方法保留用于需要跨组件访问数据的场景（如 EndpointDetail 页面）
  */
 
 import { defineStore } from 'pinia'
@@ -264,9 +269,9 @@ export const useDevelopmentStore = defineStore('development', {
       }
     },
 
-    async runTests(caseIds: string[], baseUrl?: string, environment?: string) {
-      const result = await developmentApi.runTests({
-        case_ids: caseIds,
+    async runTests(caseIds: string[], baseUrl: string, environment?: string) {
+      const result = await developmentApi.executeTests({
+        test_case_ids: caseIds,
         base_url: baseUrl,
         environment
       })

@@ -62,6 +62,19 @@ async def list_endpoints(
         """)
         params.append(tag_id)
 
+    if has_tests is True:
+        conditions.append("""
+            EXISTS (
+                SELECT 1 FROM test_cases tc WHERE tc.endpoint_id = e.endpoint_id
+            )
+        """)
+    elif has_tests is False:
+        conditions.append("""
+            NOT EXISTS (
+                SELECT 1 FROM test_cases tc WHERE tc.endpoint_id = e.endpoint_id
+            )
+        """)
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     # 获取总数
@@ -74,7 +87,7 @@ async def list_endpoints(
     sql = f"""
         SELECT
             e.*,
-            COALESCE((SELECT COUNT(*) FROM test_cases WHERE case_id LIKE (e.endpoint_id || '%')), 0) as test_case_count,
+            COALESCE((SELECT COUNT(*) FROM test_cases tc WHERE tc.endpoint_id = e.endpoint_id), 0) as test_case_count,
             (SELECT GROUP_CONCAT(t.name) FROM api_tags t
              JOIN api_endpoint_tags et ON t.id = et.tag_id
              WHERE et.endpoint_id = e.endpoint_id) as tag_names
@@ -86,13 +99,7 @@ async def list_endpoints(
     params.extend([page_size, offset])
     rows = db.fetch_all(sql, tuple(params))
 
-    # 如果需要筛选有/无测试用例
     items = [dict(row) for row in rows]
-    if has_tests is not None:
-        items = [
-            item for item in items
-            if (item['test_case_count'] > 0) == has_tests
-        ]
 
     return {
         "total": total,

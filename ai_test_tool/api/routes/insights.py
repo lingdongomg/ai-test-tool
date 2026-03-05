@@ -81,7 +81,7 @@ async def upload_log_file(
     detect_types: str | None = Form(default=None),
     include_ai_analysis: bool = Form(default=True),
     max_lines: int | None = Form(default=None, description="最大处理行数"),
-    background_tasks: BackgroundTasks | None = None,
+    background_tasks: BackgroundTasks = None,
     task_repo: TaskRepository = Depends(get_task_repository),
 ):
     """
@@ -117,7 +117,12 @@ async def upload_log_file(
     upload_dir = os.path.join(os.getcwd(), 'uploads', 'logs')
     os.makedirs(upload_dir, exist_ok=True)
 
-    file_path = os.path.join(upload_dir, f"{task_id}_{file.filename}")
+    # C1: 文件名净化，防止路径遍历攻击
+    safe_filename = os.path.basename(file.filename or "upload.log").replace("..", "")
+    file_path = os.path.join(upload_dir, f"{task_id}_{safe_filename}")
+
+    # C2: 文件大小限制 (100MB)
+    max_upload_size = 100 * 1024 * 1024
 
     try:
         # 流式写入文件，避免大文件一次性占满内存
@@ -129,6 +134,14 @@ async def upload_log_file(
                 if not chunk:
                     break
                 file_size += len(chunk)
+                if file_size > max_upload_size:
+                    # 超出限制时清理已写入的文件
+                    f.close()
+                    os.remove(file_path)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"文件大小超出限制（最大 {max_upload_size // 1024 // 1024}MB）"
+                    )
                 f.write(chunk)
 
         # 创建分析任务
@@ -255,6 +268,9 @@ def _analyze_log_task_sync(
 
         # 更新状态为完成
         task_repo.update_status(task_id, TaskStatus.COMPLETED)
+
+        # 从异常检测结果中提取知识
+        _trigger_knowledge_from_anomaly(report, task_id)
 
     except Exception as e:
         # 记录详细错误信息，包含堆栈追踪
@@ -412,6 +428,42 @@ def _trigger_knowledge_learning_from_requests(task_id: str, task_logger=None):
 
     except Exception as e:
         _logger.warn(f"知识自动学习失败（不影响主流程）: {e}")
+
+
+def _trigger_knowledge_from_anomaly(report, task_id: str):
+    """从异常检测报告中提取知识"""
+    try:
+        from ..dependencies import get_knowledge_learner
+        learner = get_knowledge_learner()
+
+        # 构造分析内容：从异常中提取可学习的模式
+        anomaly_data = []
+        for a in getattr(report, 'anomalies', [])[:20]:
+            anomaly_data.append({
+                "type": a.anomaly_type.value if hasattr(a.anomaly_type, 'value') else str(a.anomaly_type),
+                "severity": a.severity.value if hasattr(a.severity, 'value') else str(a.severity),
+                "title": a.title,
+                "description": a.description,
+            })
+        if not anomaly_data:
+            return
+
+        # 用日志分析提取方式处理
+        suggestions = learner.extract_from_log_analysis(anomaly_data, task_id)
+        if not suggestions:
+            return
+
+        created_ids = []
+        for s in suggestions:
+            if s.confidence < 0.5:
+                continue
+            item = learner.store.create_from_suggestion(s, "anomaly_detection")
+            created_ids.append(item.knowledge_id)
+            if s.confidence >= 0.8:
+                learner.store.approve([item.knowledge_id])
+        logger.info(f"异常检测任务 {task_id} 知识学习完成，创建 {len(created_ids)} 条知识")
+    except Exception as e:
+        logger.warning(f"异常检测知识学习失败（不影响主流程）: {e}")
 
 
 async def _parse_requests_task(

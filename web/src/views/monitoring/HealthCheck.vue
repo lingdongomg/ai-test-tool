@@ -84,11 +84,36 @@
         </template>
       </t-table>
     </t-card>
+
+    <!-- 历史记录 -->
+    <t-card title="检查历史" style="margin-top: 16px;">
+      <t-table
+        :data="historyList"
+        :columns="historyColumns"
+        :loading="historyLoading"
+        row-key="execution_id"
+        size="small"
+        hover
+      >
+        <template #health_rate="{ row }">
+          <t-tag :theme="row.health_rate >= 80 ? 'success' : row.health_rate >= 50 ? 'warning' : 'danger'" size="small">
+            {{ row.health_rate }}%
+          </t-tag>
+        </template>
+        <template #duration_ms="{ row }">
+          {{ row.duration_ms ? `${row.duration_ms}ms` : '-' }}
+        </template>
+        <template #created_at="{ row }">
+          {{ row.created_at || '-' }}
+        </template>
+      </t-table>
+      <t-empty v-if="!historyLoading && !historyList.length" description="暂无检查历史，请先执行一次健康检查" />
+    </t-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PlayIcon } from 'tdesign-icons-vue-next'
 import { monitoringApi } from '../../api/v2'
@@ -107,6 +132,10 @@ const checkForm = reactive({
 const checking = ref(false)
 const result = ref<any>(null)
 
+// 历史记录
+const historyList = ref<any[]>([])
+const historyLoading = ref(false)
+
 // 结果列
 const resultColumns = [
   { colKey: 'method', title: '方法', width: 80 },
@@ -117,6 +146,35 @@ const resultColumns = [
   { colKey: 'ai_analysis', title: 'AI分析', width: 100 },
   { colKey: 'error_message', title: '错误信息', ellipsis: true }
 ]
+
+// 历史记录列
+const historyColumns = [
+  { colKey: 'execution_id', title: '执行ID', width: 120, ellipsis: true },
+  { colKey: 'total', title: '总数', width: 60 },
+  { colKey: 'healthy', title: '健康', width: 60 },
+  { colKey: 'unhealthy', title: '异常', width: 60 },
+  { colKey: 'health_rate', title: '健康率', width: 100 },
+  { colKey: 'duration_ms', title: '耗时', width: 100 },
+  { colKey: 'created_at', title: '执行时间', width: 180 }
+]
+
+// 加载历史记录
+const loadHistory = async () => {
+  historyLoading.value = true
+  try {
+    const res = await monitoringApi.listHealthCheckExecutions({ page_size: 20 })
+    historyList.value = res.items || []
+  } catch (error: any) {
+    console.error('加载检查历史失败:', error)
+    MessagePlugin.error('加载检查历史失败: ' + (error?.response?.data?.detail || error.message))
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadHistory()
+})
 
 // 执行检查
 const handleCheck = async () => {
@@ -139,8 +197,10 @@ const handleCheck = async () => {
     
     result.value = res
     MessagePlugin.success(`检查完成，健康率: ${res.health_rate}%`)
-  } catch (error) {
+    loadHistory()
+  } catch (error: any) {
     console.error('健康检查失败:', error)
+    MessagePlugin.error('健康检查失败: ' + (error?.response?.data?.detail || error.message))
   } finally {
     checking.value = false
   }

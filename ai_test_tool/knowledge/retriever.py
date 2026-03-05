@@ -11,6 +11,7 @@ from typing import Any
 from .models import KnowledgeItem, KnowledgeSearchResult, KnowledgeContext
 from .store import KnowledgeStore
 from .embeddings import cosine_similarity
+from .url_matcher import UrlPatternMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -283,3 +284,46 @@ class KnowledgeRetriever:
         获取指定范围的所有知识（不做相似度过滤）
         """
         return self.store.search(scope=scope, status="active", limit=50)
+
+    def retrieve_by_url_pattern(
+        self,
+        url: str,
+        top_k: int = 5,
+        min_score: float = 10.0
+    ) -> list[KnowledgeSearchResult]:
+        """
+        通过 URL 模式匹配检索知识
+
+        使用 UrlPatternMatcher 基于知识条目的 scope 字段（API 路径）
+        进行三级匹配：精确 > 规范化 > 路径段模糊。
+
+        Args:
+            url: 请求 URL
+            top_k: 最大返回数
+            min_score: 最低匹配分数
+
+        Returns:
+            匹配的知识结果列表
+        """
+        try:
+            # 获取所有 active 状态且有 scope 的知识
+            items = self.store.search(status="active", limit=500)
+
+            matcher = UrlPatternMatcher()
+            matcher.build_index(items)
+
+            url_results = matcher.match(url, max_results=top_k)
+
+            results = []
+            for r in url_results:
+                if r.score >= min_score:
+                    results.append(KnowledgeSearchResult(
+                        item=r.item,
+                        score=r.score / 100.0,  # 归一化到 0~1
+                        source=f"url_match:{r.match_type}"
+                    ))
+
+            return results
+        except Exception as e:
+            logger.warning(f"URL 模式匹配检索失败: {e}")
+            return []
