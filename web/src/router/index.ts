@@ -155,6 +155,12 @@ const router = createRouter({
           name: 'KnowledgeSearch',
           component: () => import('../views/knowledge/SearchTest.vue'),
           meta: { title: '检索测试', parent: 'Knowledge' }
+        },
+        {
+          path: 'log-sources',
+          name: 'LogSources',
+          component: () => import('../views/knowledge/LogSources.vue'),
+          meta: { title: '日志源', parent: 'Knowledge' }
         }
       ]
     },

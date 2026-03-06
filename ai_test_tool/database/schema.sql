@@ -601,3 +601,27 @@ CREATE INDEX IF NOT EXISTS idx_health_check_results_execution_id ON health_check
 CREATE INDEX IF NOT EXISTS idx_health_check_results_request_id ON health_check_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_health_check_results_success ON health_check_results(success);
 CREATE INDEX IF NOT EXISTS idx_health_check_results_checked_at ON health_check_results(checked_at);
+
+-- =====================================================
+-- 日志源配置表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS log_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    tags TEXT DEFAULT '[]',
+    buffer_size INTEGER DEFAULT 100,
+    buffer_timeout_sec INTEGER DEFAULT 30,
+    auto_learn BOOLEAN DEFAULT 1,
+    auto_approve_threshold REAL DEFAULT 0.8,
+    is_enabled BOOLEAN DEFAULT 1,
+    status TEXT DEFAULT 'disconnected',
+    total_lines_received INTEGER DEFAULT 0,
+    total_analyses_triggered INTEGER DEFAULT 0,
+    last_active_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_log_sources_source_id ON log_sources(source_id);
+CREATE INDEX IF NOT EXISTS idx_log_sources_is_enabled ON log_sources(is_enabled);

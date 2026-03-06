@@ -98,14 +98,18 @@ class AILogger:
         
         # 如果没有handler，添加文件handler
         if not self._std_logger.handlers:
-            file_handler = logging.FileHandler(self._log_file_path, encoding='utf-8')
-            file_handler.setLevel(logging.DEBUG)
-            formatter = logging.Formatter(
-                '[%(asctime)s] [%(levelname)s] %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            file_handler.setFormatter(formatter)
-            self._std_logger.addHandler(file_handler)
+            try:
+                file_handler = logging.FileHandler(self._log_file_path, encoding='utf-8')
+                file_handler.setLevel(logging.DEBUG)
+                formatter = logging.Formatter(
+                    '[%(asctime)s] [%(levelname)s] %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S'
+                )
+                file_handler.setFormatter(formatter)
+                self._std_logger.addHandler(file_handler)
+            except Exception as e:
+                print(f"警告: 无法创建日志文件Handler {self._log_file_path}: {e}")
+                self._log_file = None
     
     def _format_time(self) -> str:
         """格式化当前时间"""

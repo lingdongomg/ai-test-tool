@@ -12,6 +12,10 @@
           <template #icon><add-icon /></template>
           从文本学习
         </t-button>
+        <t-button @click="showLogLearnDialog = true">
+          <template #icon><add-icon /></template>
+          从日志学习
+        </t-button>
         <t-button @click="handleRebuildIndex" :loading="rebuildingIndex">
           重建索引
         </t-button>
@@ -250,14 +254,122 @@
         <t-button theme="primary" @click="handleLearn" :loading="learning">开始学习</t-button>
       </template>
     </t-dialog>
+
+    <!-- 从日志学习对话框 -->
+    <t-dialog
+      v-model:visible="showLogLearnDialog"
+      header="从日志学习知识"
+      width="700px"
+    >
+      <t-tabs v-model="logLearnTab">
+        <t-tab-panel value="task" label="从分析任务学习">
+          <div style="padding: 16px 0;">
+            <t-form label-width="100px">
+              <t-form-item label="选择任务" required>
+                <t-select
+                  v-model="logLearnForm.task_id"
+                  placeholder="选择已完成的分析任务"
+                  style="width: 100%"
+                  :loading="loadingTasks"
+                  filterable
+                >
+                  <t-option
+                    v-for="task in completedTasks"
+                    :key="task.task_id"
+                    :value="task.task_id"
+                    :label="`${task.name} (${task.total_requests || 0}个请求)`"
+                  />
+                </t-select>
+                <div v-if="completedTasks.length === 0 && !loadingTasks" style="margin-top: 8px; color: rgba(0,0,0,0.4); font-size: 12px;">
+                  暂无已完成的分析任务，请先到「日志洞察」页面上传日志
+                </div>
+              </t-form-item>
+              <t-form-item label="自动审核">
+                <t-switch v-model="logLearnForm.auto_approve" />
+                <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">高置信度知识自动通过审核</span>
+              </t-form-item>
+            </t-form>
+          </div>
+        </t-tab-panel>
+        <t-tab-panel value="file" label="上传日志文件">
+          <div style="padding: 16px 0;">
+            <t-form label-width="100px">
+              <t-form-item label="日志文件" required>
+                <t-upload
+                  v-model="logLearnFiles"
+                  :auto-upload="false"
+                  :multiple="false"
+                  accept=".log,.txt,.json"
+                  theme="dragger"
+                >
+                  <div style="padding: 20px; text-align: center;">
+                    <div style="font-size: 14px; color: rgba(0,0,0,0.6);">点击或拖拽上传日志文件</div>
+                    <div style="font-size: 12px; color: rgba(0,0,0,0.4); margin-top: 4px;">支持 .log .txt .json 格式</div>
+                  </div>
+                </t-upload>
+              </t-form-item>
+              <t-form-item label="来源说明">
+                <t-input v-model="logLearnForm.source_ref" placeholder="可选，如：生产日志 2026-03" />
+              </t-form-item>
+              <t-form-item label="最大行数">
+                <t-input-number v-model="logLearnForm.max_lines" :min="100" placeholder="不限制" style="width: 200px" />
+              </t-form-item>
+              <t-form-item label="自动审核">
+                <t-switch v-model="logLearnForm.auto_approve" />
+                <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">高置信度知识自动通过审核</span>
+              </t-form-item>
+            </t-form>
+          </div>
+        </t-tab-panel>
+      </t-tabs>
+      <template #footer>
+        <t-button @click="showLogLearnDialog = false">取消</t-button>
+        <t-button theme="primary" @click="handleLogLearn" :loading="logLearning">开始学习</t-button>
+      </template>
+    </t-dialog>
+
+    <!-- 学习结果对话框 -->
+    <t-dialog
+      v-model:visible="showLearnResultDialog"
+      header="学习结果"
+      width="650px"
+    >
+      <div v-if="learnResult">
+        <p style="margin-bottom: 16px;">{{ learnResult.message }}</p>
+        <t-table :data="learnResult.items" stripe v-if="learnResult.items?.length">
+          <t-table-column prop="title" label="标题" min-width="200" />
+          <t-table-column prop="type" label="类型" width="100">
+            <template #cell="{ row }">
+              <t-tag :theme="getTypeTagType(row.type)" size="small">{{ getTypeName(row.type) }}</t-tag>
+            </template>
+          </t-table-column>
+          <t-table-column prop="confidence" label="置信度" width="80" align="center">
+            <template #cell="{ row }">{{ row.confidence }}</template>
+          </t-table-column>
+          <t-table-column prop="status" label="状态" width="100">
+            <template #cell="{ row }">
+              <t-tag v-if="row.status === 'active'" theme="success" size="small">已通过</t-tag>
+              <t-tag v-else theme="warning" size="small">待审核</t-tag>
+            </template>
+          </t-table-column>
+        </t-table>
+        <div v-else style="padding: 24px; text-align: center; color: rgba(0,0,0,0.4);">
+          未提取到知识条目
+        </div>
+      </div>
+      <template #footer>
+        <t-button theme="primary" @click="closeLearnResult">关闭</t-button>
+      </template>
+    </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { AddIcon, RefreshIcon } from 'tdesign-icons-vue-next'
 import { knowledgeApi } from '../../api/v2'
+import { insightsApi } from '../../api/v2'
 
 // 状态
 const loading = ref(false)
@@ -272,6 +384,24 @@ const showDetailDialog = ref(false)
 const showLearnDialog = ref(false)
 const editingKnowledge = ref<any>(null)
 const detailKnowledge = ref<any>(null)
+
+// 从日志学习
+const showLogLearnDialog = ref(false)
+const logLearning = ref(false)
+const logLearnTab = ref('task')
+const loadingTasks = ref(false)
+const completedTasks = ref<any[]>([])
+const logLearnFiles = ref<any[]>([])
+const logLearnForm = reactive({
+  task_id: '',
+  auto_approve: true,
+  source_ref: '',
+  max_lines: null as number | null,
+})
+
+// 学习结果
+const showLearnResultDialog = ref(false)
+const learnResult = ref<any>(null)
 
 // 筛选
 const filters = reactive({
@@ -514,10 +644,87 @@ const handleRebuildIndex = async () => {
   }
 }
 
+// 加载已完成的分析任务
+const loadCompletedTasks = async () => {
+  loadingTasks.value = true
+  try {
+    const data: any = await insightsApi.listTasks({ status: 'completed', page_size: 100 })
+    completedTasks.value = data.items || []
+  } catch (error) {
+    console.error('加载任务列表失败:', error)
+    completedTasks.value = []
+  } finally {
+    loadingTasks.value = false
+  }
+}
+
+// 从日志学习
+const handleLogLearn = async () => {
+  logLearning.value = true
+  try {
+    let result: any
+
+    if (logLearnTab.value === 'task') {
+      // 从分析任务学习
+      if (!logLearnForm.task_id) {
+        MessagePlugin.warning('请选择分析任务')
+        logLearning.value = false
+        return
+      }
+      result = await knowledgeApi.learnFromTask({
+        task_id: logLearnForm.task_id,
+        auto_approve: logLearnForm.auto_approve,
+      })
+    } else {
+      // 从文件学习
+      if (!logLearnFiles.value.length) {
+        MessagePlugin.warning('请选择日志文件')
+        logLearning.value = false
+        return
+      }
+      const file = logLearnFiles.value[0].raw || logLearnFiles.value[0]
+      result = await knowledgeApi.learnFromFile(file, {
+        auto_approve: logLearnForm.auto_approve,
+        source_ref: logLearnForm.source_ref || undefined,
+        max_lines: logLearnForm.max_lines || undefined,
+      })
+    }
+
+    showLogLearnDialog.value = false
+    learnResult.value = result
+    showLearnResultDialog.value = true
+    MessagePlugin.success(result.message || '知识学习完成')
+  } catch (error: any) {
+    const msg = error?.response?.data?.detail || '知识学习失败'
+    MessagePlugin.error(msg)
+  } finally {
+    logLearning.value = false
+  }
+}
+
+// 关闭学习结果
+const closeLearnResult = () => {
+  showLearnResultDialog.value = false
+  learnResult.value = null
+  // 重置表单
+  logLearnForm.task_id = ''
+  logLearnForm.source_ref = ''
+  logLearnForm.max_lines = null
+  logLearnFiles.value = []
+  refreshList()
+}
+
 // 初始化
 onMounted(() => {
   loadList()
   loadStatistics()
+})
+
+// 打开日志学习对话框时加载任务
+watch(showLogLearnDialog, (visible) => {
+  if (visible) {
+    loadCompletedTasks()
+  }
 })
 </script>
 

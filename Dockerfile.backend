@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ai_test_tool/ ai_test_tool/
 COPY server.py .
 
+# 创建挂载目录并设置权限，确保非root用户可写
+RUN mkdir -p /app/data /app/logs /app/uploads
+
 # 安全：使用非 root 用户运行
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
     && chown -R appuser:appgroup /app

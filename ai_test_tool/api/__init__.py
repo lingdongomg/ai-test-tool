@@ -4,7 +4,7 @@ FastAPI 后台服务模块
 """
 
 from .app import create_app
-from .routes import dashboard, development, monitoring, insights, ai_assistant, imports
+from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, log_stream
 
 __all__ = [
     "create_app",
@@ -13,5 +13,6 @@ __all__ = [
     "monitoring",
     "insights",
     "ai_assistant",
-    "imports"
+    "imports",
+    "log_stream"
 ]

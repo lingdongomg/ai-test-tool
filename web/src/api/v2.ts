@@ -333,6 +333,24 @@ export const knowledgeApi = {
     content: string; source_ref?: string; auto_approve?: boolean
   }): Promise<KnowledgeEntry> => api.post('/knowledge/learn', data),
 
+  learnFromTask: (data: {
+    task_id: string; auto_approve?: boolean
+  }): Promise<any> => api.post('/knowledge/learn-from-task', data),
+
+  learnFromFile: (file: File, params?: {
+    auto_approve?: boolean; source_ref?: string; max_lines?: number
+  }): Promise<any> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (params?.auto_approve !== undefined) formData.append('auto_approve', String(params.auto_approve))
+    if (params?.source_ref) formData.append('source_ref', params.source_ref)
+    if (params?.max_lines) formData.append('max_lines', String(params.max_lines))
+    return api.post('/knowledge/learn-from-file', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000
+    })
+  },
+
   rebuildIndex: (): Promise<{ message: string }> => api.post('/knowledge/rebuild-index'),
 }
 
@@ -372,6 +390,28 @@ export const importApi = {
   },
 
   getSupportedFormats: (): Promise<any> => api.get('/imports/supported-formats')
+}
+
+// ==================== 实时日志流 API ====================
+export const logStreamApi = {
+  listSources: (params?: {
+    is_enabled?: boolean; status?: string
+  }): Promise<any> => api.get('/log-stream/sources', { params }),
+
+  createSource: (data: {
+    name: string; description?: string; tags?: string[]
+    buffer_size?: number; buffer_timeout_sec?: number
+    auto_learn?: boolean; auto_approve_threshold?: number
+  }): Promise<any> => api.post('/log-stream/sources', data),
+
+  updateSource: (sourceId: string, data: any): Promise<any> =>
+    api.put(`/log-stream/sources/${sourceId}`, data),
+
+  deleteSource: (sourceId: string): Promise<void> =>
+    api.delete(`/log-stream/sources/${sourceId}`),
+
+  getSourceStats: (sourceId: string): Promise<any> =>
+    api.get(`/log-stream/sources/${sourceId}/stats`),
 }
 
 export default api

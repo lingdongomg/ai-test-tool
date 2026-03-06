@@ -152,6 +152,7 @@ class KnowledgeSource(Enum):
     MANUAL = "manual"
     LOG_LEARNING = "log_learning"
     TEST_LEARNING = "test_learning"
+    REALTIME_LOG = "realtime_log"
 
 
 # =====================================================

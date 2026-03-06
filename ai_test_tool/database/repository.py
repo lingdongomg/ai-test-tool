@@ -33,4 +33,5 @@ from .repositories import (  # noqa: F401
     ChatSessionRepository,
     ChatMessageRepository,
     SystemConfigRepository,
+    LogSourceRepository,
 )

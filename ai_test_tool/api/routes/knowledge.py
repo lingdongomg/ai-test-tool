@@ -4,7 +4,7 @@
 提供知识的CRUD、检索、审核等接口
 """
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -73,6 +73,12 @@ class LearnRequest(BaseModel):
     content: str = Field(..., description="要分析的内容")
     source_ref: str = Field(default="", description="来源引用")
     auto_approve: bool = Field(default=False, description="是否自动审核通过")
+
+
+class LearnFromTaskRequest(BaseModel):
+    """从分析任务学习知识请求"""
+    task_id: str = Field(..., description="分析任务 ID")
+    auto_approve: bool = Field(default=False, description="高置信度知识是否自动审核通过")
 
 
 # ============== 接口实现 ==============
@@ -324,6 +330,182 @@ async def learn_knowledge(
         "knowledge_ids": created_ids,
         "message": f"Extracted and saved {len(created_ids)} knowledge entries"
     }
+
+
+@router.post("/learn-from-task")
+async def learn_from_task(
+    request: LearnFromTaskRequest,
+    learner: KnowledgeLearner = Depends(get_knowledge_learner)
+) -> dict[str, Any]:
+    """从已完成的日志分析任务中学习知识"""
+    try:
+        created_ids, items_detail = learner.learn_from_task(
+            task_id=request.task_id,
+            auto_approve=request.auto_approve,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "success": True,
+        "created_count": len(created_ids),
+        "knowledge_ids": created_ids,
+        "items": items_detail,
+        "message": f"从任务 {request.task_id} 中提取了 {len(created_ids)} 条知识"
+    }
+
+
+@router.post("/learn-from-file")
+async def learn_from_file(
+    file: UploadFile = File(..., description="日志文件（.log/.txt/.json）"),
+    auto_approve: bool = Form(default=False),
+    source_ref: str = Form(default=""),
+    max_lines: int | None = Form(default=None),
+    learner: KnowledgeLearner = Depends(get_knowledge_learner)
+) -> dict[str, Any]:
+    """上传日志文件直接学习知识"""
+    import os
+    import uuid as _uuid
+    from ...parser.log_parser import LogParser
+    from ...llm.chains import LogAnalysisChain
+    from ...llm.provider import get_llm_provider
+    from ...database.repository import TaskRepository, RequestRepository
+    from ...database.models import ParsedRequestRecord, AnalysisTask
+    from ...database.models.base import TaskStatus
+
+    # 验证文件类型
+    allowed_extensions = {'.log', '.txt', '.json'}
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型，支持: {', '.join(allowed_extensions)}"
+        )
+
+    # 保存文件
+    task_id = str(_uuid.uuid4())[:8]
+    upload_dir = os.path.join(os.getcwd(), 'uploads', 'logs')
+    os.makedirs(upload_dir, exist_ok=True)
+
+    safe_filename = os.path.basename(file.filename or "upload.log").replace("..", "")
+    file_path = os.path.join(upload_dir, f"{task_id}_{safe_filename}")
+
+    max_upload_size = 100 * 1024 * 1024
+    file_size = 0
+    try:
+        with open(file_path, 'wb') as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > max_upload_size:
+                    f.close()
+                    os.remove(file_path)
+                    raise HTTPException(status_code=400, detail="文件大小超出限制（最大 100MB）")
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
+
+    # 创建分析任务记录
+    task_repo = TaskRepository()
+    task = AnalysisTask(
+        task_id=task_id,
+        name=f"知识学习-{file.filename}",
+        log_file_path=file_path,
+        log_file_size=file_size,
+    )
+    task_repo.create(task)
+    task_repo.update_status(task_id, TaskStatus.RUNNING)
+
+    # 解析日志
+    try:
+        try:
+            provider = get_llm_provider()
+            llm_chain = LogAnalysisChain(provider, verbose=False)
+        except Exception:
+            llm_chain = None
+
+        parser = LogParser(llm_chain=llm_chain, verbose=False)
+        request_repo = RequestRepository()
+
+        total_requests = 0
+        parsed_requests_data: list[dict] = []
+
+        for batch_requests in parser.parse_file(file_path, max_lines=max_lines):
+            records = []
+            for req in batch_requests:
+                record = ParsedRequestRecord(
+                    task_id=task_id,
+                    request_id=req.request_id or str(_uuid.uuid4())[:16],
+                    method=req.method,
+                    url=req.url,
+                    category=req.category,
+                    headers=req.headers or {},
+                    body=req.body,
+                    query_params=req.query_params or {},
+                    http_status=req.http_status,
+                    response_time_ms=req.response_time_ms,
+                    response_body=req.response_body,
+                    has_error=req.has_error,
+                    error_message=req.error_message,
+                    has_warning=req.has_warning,
+                    warning_message=req.warning_message,
+                    curl_command=req.curl_command,
+                    timestamp=req.timestamp,
+                    raw_logs='\n'.join(req.raw_logs) if req.raw_logs else '',
+                    metadata=req.metadata or {}
+                )
+                records.append(record)
+                parsed_requests_data.append(req.to_dict())
+
+            if records:
+                request_repo.create_batch(records)
+                total_requests += len(records)
+
+        task_repo.update_status(task_id, TaskStatus.COMPLETED)
+
+        # 提取知识
+        suggestions = learner.extract_from_log_analysis(parsed_requests_data, task_id)
+        created_ids = []
+        items_detail = []
+        for suggestion in suggestions:
+            if suggestion.confidence < 0.5:
+                continue
+            item = learner.store.create_from_suggestion(suggestion, "log_file_learning")
+            created_ids.append(item.knowledge_id)
+            status = "pending"
+            if auto_approve and suggestion.confidence >= 0.8:
+                learner.store.approve([item.knowledge_id])
+                status = "active"
+            items_detail.append({
+                "knowledge_id": item.knowledge_id,
+                "title": suggestion.title,
+                "type": suggestion.type,
+                "confidence": round(suggestion.confidence, 2),
+                "status": status,
+            })
+
+        logger.info(f"文件知识学习完成: 解析 {total_requests} 个请求，提取 {len(created_ids)} 条知识")
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "file_name": file.filename,
+            "file_size": file_size,
+            "parsed_requests": total_requests,
+            "created_count": len(created_ids),
+            "knowledge_ids": created_ids,
+            "items": items_detail,
+            "message": f"从文件中解析 {total_requests} 个请求，提取了 {len(created_ids)} 条知识"
+        }
+
+    except Exception as e:
+        task_repo.update_status(task_id, TaskStatus.FAILED, error_message=str(e))
+        logger.error(f"文件知识学习失败: {e}")
+        raise HTTPException(status_code=500, detail=f"知识学习失败: {e}")
 
 
 @router.post("/rebuild-index")

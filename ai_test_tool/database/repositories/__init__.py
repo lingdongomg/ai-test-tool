@@ -52,6 +52,8 @@ from .system import (
     SystemConfigRepository,
 )
 
+from .log_source import LogSourceRepository
+
 __all__ = [
     'BaseRepository',
     # Core
@@ -72,4 +74,6 @@ __all__ = [
     'HealthCheckExecutionRepository', 'HealthCheckResultRepository',
     # System
     'ChatSessionRepository', 'ChatMessageRepository', 'SystemConfigRepository',
+    # Log Source
+    'LogSourceRepository',
 ]

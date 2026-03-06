@@ -8,10 +8,6 @@
         <p class="welcome-desc">接口自动化测试与智能运维平台</p>
       </div>
       <div class="welcome-right">
-        <t-button theme="default" variant="outline" @click="handleRefresh" :loading="dataLoading" style="color: #fff; border-color: rgba(255,255,255,0.5); margin-right: 16px;">
-          <template #icon><RefreshIcon /></template>
-          刷新
-        </t-button>
         <div class="welcome-stats">
         <div class="welcome-stat-item">
           <span class="welcome-stat-value">{{ stats.endpoints?.total || 0 }}</span>
@@ -170,7 +166,7 @@
 import { ref, computed, onMounted, onUnmounted, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { ApiIcon, CheckCircleIcon, HeartIcon, ErrorCircleIcon, FileImportIcon, CodeIcon, FileIcon, DashboardIcon, ChartIcon, RefreshIcon } from 'tdesign-icons-vue-next'
+import { ApiIcon, CheckCircleIcon, HeartIcon, ErrorCircleIcon, FileImportIcon, CodeIcon, FileIcon, DashboardIcon, ChartIcon } from 'tdesign-icons-vue-next'
 import VChart from 'vue-echarts'
 import { dashboardApi } from '../api/v2'
 import { StatCard, StatusTag } from '../components'
@@ -218,10 +214,6 @@ const loadData = async () => {
     dataLoading.value = false
     statsLoading.value = false
   }
-}
-
-const handleRefresh = () => {
-  loadData()
 }
 
 onMounted(() => {

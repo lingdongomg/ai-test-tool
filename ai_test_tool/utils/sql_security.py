@@ -47,6 +47,7 @@ ALLOWED_TABLES: frozenset[str] = frozenset({
     "chat_sessions",
     "chat_messages",
     "system_configs",
+    "log_sources",
 })
 
 # 每个表允许的字段（用于 UPDATE/INSERT 操作的字段白名单）

@@ -56,6 +56,7 @@
           <t-menu-item value="knowledge-list">知识管理</t-menu-item>
           <t-menu-item value="knowledge-pending">待审核</t-menu-item>
           <t-menu-item value="knowledge-search">检索测试</t-menu-item>
+          <t-menu-item value="knowledge-log-sources">日志源</t-menu-item>
         </t-submenu>
 
         <t-divider style="margin: 8px 16px; background: rgba(255,255,255,0.1);" />
@@ -158,6 +159,7 @@ const activeMenu = computed(() => {
     if (path.includes('/list')) return 'knowledge-list'
     if (path.includes('/pending')) return 'knowledge-pending'
     if (path.includes('/search')) return 'knowledge-search'
+    if (path.includes('/log-sources')) return 'knowledge-log-sources'
   }
 
   // 其他页面
@@ -216,6 +218,7 @@ const breadcrumbs = computed(() => {
     if (path.includes('/list')) crumbs.push({ title: '知识管理' })
     else if (path.includes('/pending')) crumbs.push({ title: '待审核' })
     else if (path.includes('/search')) crumbs.push({ title: '检索测试' })
+    else if (path.includes('/log-sources')) crumbs.push({ title: '日志源' })
   } else {
     crumbs.push({ title: route.meta?.title as string || '首页' })
   }
@@ -265,6 +268,7 @@ const handleMenuChange = (value: string) => {
     'knowledge-list': '/knowledge/list',
     'knowledge-pending': '/knowledge/pending',
     'knowledge-search': '/knowledge/search',
+    'knowledge-log-sources': '/knowledge/log-sources',
     'import': '/import'
   }
   

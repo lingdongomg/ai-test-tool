@@ -39,6 +39,7 @@ from ..database.repository import (
     ChatSessionRepository,
     ChatMessageRepository,
     SystemConfigRepository,
+    LogSourceRepository,
 )
 
 
@@ -300,6 +301,19 @@ def get_insights_service():
     return InsightsService()
 
 
+@lru_cache()
+def get_log_source_repository() -> LogSourceRepository:
+    """获取日志源仓库（单例）"""
+    return LogSourceRepository()
+
+
+@lru_cache()
+def get_log_stream_service():
+    """获取实时日志流服务（单例）"""
+    from ..services.log_stream import LogStreamService
+    return LogStreamService()
+
+
 # =====================================================
 # 清除缓存（用于测试）
 # =====================================================
@@ -339,3 +353,5 @@ def clear_dependency_cache():
     get_knowledge_learner.cache_clear()
     get_log_anomaly_detector_service.cache_clear()
     get_insights_service.cache_clear()
+    get_log_source_repository.cache_clear()
+    get_log_stream_service.cache_clear()

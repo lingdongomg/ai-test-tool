@@ -418,6 +418,75 @@ class KnowledgeLearner:
             logger.error(f"Failed to extract knowledge with LLM: {e}")
             return []
     
+    def learn_from_task(
+        self,
+        task_id: str,
+        auto_approve: bool = False,
+    ) -> tuple[list[str], list[dict]]:
+        """
+        从已完成的日志分析任务中学习知识
+
+        Args:
+            task_id: 分析任务 ID
+            auto_approve: 是否自动审核高置信度知识
+
+        Returns:
+            (created_ids, items_detail) 创建的知识ID列表 + 条目详情列表
+        """
+        from ..database.repository import RequestRepository, TaskRepository
+        from ..database.models.base import TaskStatus
+
+        task_repo = TaskRepository()
+        request_repo = RequestRepository()
+
+        # 检查任务存在且已完成
+        task = task_repo.get_by_id(task_id)
+        if not task:
+            raise ValueError(f"任务不存在: {task_id}")
+        if task.status != TaskStatus.COMPLETED:
+            raise ValueError(f"任务状态不是 completed（当前: {task.status.value}）")
+
+        # 获取解析的请求数据
+        rows = request_repo.db.fetch_all(
+            "SELECT * FROM parsed_requests WHERE task_id = %s",
+            (task_id,)
+        )
+        if not rows:
+            raise ValueError(f"任务 {task_id} 无解析请求数据")
+
+        parsed_requests = [dict(r) for r in rows]
+
+        # 使用已有的 extract_from_log_analysis
+        suggestions = self.extract_from_log_analysis(parsed_requests, task_id)
+        if not suggestions:
+            return [], []
+
+        # 保存知识
+        created_ids = []
+        items_detail = []
+        for suggestion in suggestions:
+            if suggestion.confidence < 0.5:
+                continue
+
+            item = self.store.create_from_suggestion(suggestion, "log_task_learning")
+            created_ids.append(item.knowledge_id)
+
+            status = "pending"
+            if auto_approve and suggestion.confidence >= 0.8:
+                self.store.approve([item.knowledge_id])
+                status = "active"
+
+            items_detail.append({
+                "knowledge_id": item.knowledge_id,
+                "title": suggestion.title,
+                "type": suggestion.type,
+                "confidence": round(suggestion.confidence, 2),
+                "status": status,
+            })
+
+        logger.info(f"从任务 {task_id} 学习完成，创建 {len(created_ids)} 条知识")
+        return created_ids, items_detail
+
     def learn_and_save(
         self,
         content: str,

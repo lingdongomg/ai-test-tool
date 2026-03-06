@@ -36,6 +36,9 @@ from .monitoring import (
     HealthCheckExecution, HealthCheckResult, HealthCheckStatus,
 )
 
+# 日志源模型
+from .log_source import LogSource, LogSourceStatus
+
 
 # =====================================================
 # 兼容性别名（保持向后兼容）
@@ -77,6 +80,8 @@ __all__ = [
     'AIInsight', 'InsightSeverity',
     'ProductionRequest', 'RequestSource',
     'HealthCheckExecution', 'HealthCheckResult', 'HealthCheckStatus',
+    # 日志源
+    'LogSource', 'LogSourceStatus',
     # 兼容性别名
     'ScheduledTask', 'TestCaseVersion', 'TestCaseChangeLog',
 ]
