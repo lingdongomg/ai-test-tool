@@ -163,6 +163,25 @@ class TaskConfig(BaseModel):
         return cls(max_workers=int(os.getenv("TASK_MAX_WORKERS", "4")))
 
 
+class KnowledgeConfig(BaseModel):
+    """知识库配置 (V2)"""
+
+    auto_learn: bool = Field(default=True, description="事件完成后是否自动触发知识学习")
+    pipeline_v2: bool = Field(default=True, description="是否启用 V2 多阶段提取管线")
+    auto_approve_threshold: float = Field(default=0.8, description="自动审核通过的置信度阈值")
+    min_confidence: float = Field(default=0.3, description="最低置信度（低于此值的知识被过滤）")
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """从环境变量加载配置"""
+        return cls(
+            auto_learn=os.getenv("KNOWLEDGE_AUTO_LEARN", "true").lower() in ("true", "1", "yes"),
+            pipeline_v2=os.getenv("KNOWLEDGE_PIPELINE_V2", "true").lower() in ("true", "1", "yes"),
+            auto_approve_threshold=float(os.getenv("KNOWLEDGE_AUTO_APPROVE_THRESHOLD", "0.8")),
+            min_confidence=float(os.getenv("KNOWLEDGE_MIN_CONFIDENCE", "0.3")),
+        )
+
+
 class AppConfig(BaseModel):
     """应用总配置"""
 
@@ -172,6 +191,7 @@ class AppConfig(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     task: TaskConfig = Field(default_factory=TaskConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
 
     @classmethod
     def load(cls, config_path: str | None = None) -> Self:
@@ -191,6 +211,7 @@ class AppConfig(BaseModel):
             output=OutputConfig(),
             security=SecurityConfig.from_env(),
             task=TaskConfig.from_env(),
+            knowledge=KnowledgeConfig.from_env(),
         )
 
 

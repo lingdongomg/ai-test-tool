@@ -4,7 +4,7 @@
 提供知识的CRUD、检索、审核等接口
 """
 
-from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -357,40 +357,54 @@ async def learn_from_task(
 
 @router.post("/learn-from-file")
 async def learn_from_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="日志文件（.log/.txt/.json）"),
     auto_approve: bool = Form(default=False),
     source_ref: str = Form(default=""),
     max_lines: int | None = Form(default=None),
     learner: KnowledgeLearner = Depends(get_knowledge_learner)
 ) -> dict[str, Any]:
-    """上传日志文件直接学习知识"""
+    """上传日志文件学习知识（异步处理，立即返回任务ID）"""
     import os
+    import re
     import uuid as _uuid
-    from ...parser.log_parser import LogParser
-    from ...llm.chains import LogAnalysisChain
-    from ...llm.provider import get_llm_provider
-    from ...database.repository import TaskRepository, RequestRepository
-    from ...database.models import ParsedRequestRecord, AnalysisTask
+    from ...database.repository import TaskRepository
+    from ...database.models import AnalysisTask
     from ...database.models.base import TaskStatus
 
-    # 验证文件类型
-    allowed_extensions = {'.log', '.txt', '.json'}
-    file_ext = os.path.splitext(file.filename or "")[1].lower()
-    if file_ext not in allowed_extensions:
+    # ---- 文件类型验证（宽松策略，兼容 Windows 8.3 短文件名） ----
+    filename = file.filename or "upload.log"
+    file_ext = os.path.splitext(filename)[1].lower()
+
+    # 宽松匹配：.json / .jso / .jsn / .log / .txt 等
+    allowed_patterns = re.compile(r'\.(json|jso|jsn|log|txt)$', re.I)
+    # 也通过 content_type 判断
+    allowed_content_types = {
+        'application/json', 'text/plain', 'text/json',
+        'application/octet-stream',  # 浏览器有时对 .log 文件使用此类型
+    }
+
+    ext_ok = bool(allowed_patterns.search(filename.lower()))
+    ct_ok = (file.content_type or '') in allowed_content_types
+
+    if not ext_ok and not ct_ok:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件类型，支持: {', '.join(allowed_extensions)}"
+            detail=f"不支持的文件类型 ({filename})。支持 .json .log .txt 格式"
         )
 
-    # 保存文件
+    # ---- 保存文件 ----
     task_id = str(_uuid.uuid4())[:8]
     upload_dir = os.path.join(os.getcwd(), 'uploads', 'logs')
     os.makedirs(upload_dir, exist_ok=True)
 
-    safe_filename = os.path.basename(file.filename or "upload.log").replace("..", "")
+    # 规范化文件名：去掉 Windows 8.3 前缀，保留可读名
+    safe_filename = os.path.basename(filename).replace("..", "")
+    # 如果后缀被截断（如 .jso），修正为 .json
+    if safe_filename.lower().endswith(('.jso', '.jsn')):
+        safe_filename = safe_filename[:-4] + '.json'
     file_path = os.path.join(upload_dir, f"{task_id}_{safe_filename}")
 
-    max_upload_size = 100 * 1024 * 1024
     file_size = 0
     try:
         with open(file_path, 'wb') as f:
@@ -399,28 +413,60 @@ async def learn_from_file(
                 if not chunk:
                     break
                 file_size += len(chunk)
-                if file_size > max_upload_size:
-                    f.close()
-                    os.remove(file_path)
-                    raise HTTPException(status_code=400, detail="文件大小超出限制（最大 100MB）")
                 f.write(chunk)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
-    # 创建分析任务记录
+    # ---- 创建分析任务记录 ----
     task_repo = TaskRepository()
     task = AnalysisTask(
         task_id=task_id,
-        name=f"知识学习-{file.filename}",
+        name=f"知识学习-{safe_filename}",
         log_file_path=file_path,
         log_file_size=file_size,
     )
     task_repo.create(task)
     task_repo.update_status(task_id, TaskStatus.RUNNING)
 
-    # 解析日志
+    # ---- 后台异步执行解析和知识提取 ----
+    background_tasks.add_task(
+        _run_file_learning,
+        task_id=task_id,
+        file_path=file_path,
+        max_lines=max_lines,
+        auto_approve=auto_approve,
+    )
+
+    # 立即返回，不等待学习完成
+    return {
+        "success": True,
+        "task_id": task_id,
+        "file_name": safe_filename,
+        "file_size": file_size,
+        "message": f"文件已上传，正在后台学习知识（任务 {task_id}）",
+        "status": "running",
+    }
+
+
+def _run_file_learning(
+    task_id: str,
+    file_path: str,
+    max_lines: int | None,
+    auto_approve: bool,
+):
+    """后台执行文件知识学习（同步函数，由 BackgroundTasks 调用）"""
+    import uuid as _uuid
+    from ...parser.log_parser import LogParser
+    from ...llm.chains import LogAnalysisChain
+    from ...llm.provider import get_llm_provider
+    from ...database.repository import TaskRepository, RequestRepository
+    from ...database.models import ParsedRequestRecord
+    from ...database.models.base import TaskStatus
+    from ..dependencies import get_knowledge_learner
+
+    task_repo = TaskRepository()
     try:
         try:
             provider = get_llm_provider()
@@ -468,44 +514,22 @@ async def learn_from_file(
         task_repo.update_status(task_id, TaskStatus.COMPLETED)
 
         # 提取知识
+        learner = get_knowledge_learner()
         suggestions = learner.extract_from_log_analysis(parsed_requests_data, task_id)
-        created_ids = []
-        items_detail = []
+        created_count = 0
         for suggestion in suggestions:
-            if suggestion.confidence < 0.5:
+            if suggestion.confidence < 0.3:
                 continue
             item = learner.store.create_from_suggestion(suggestion, "log_file_learning")
-            created_ids.append(item.knowledge_id)
-            status = "pending"
+            created_count += 1
             if auto_approve and suggestion.confidence >= 0.8:
                 learner.store.approve([item.knowledge_id])
-                status = "active"
-            items_detail.append({
-                "knowledge_id": item.knowledge_id,
-                "title": suggestion.title,
-                "type": suggestion.type,
-                "confidence": round(suggestion.confidence, 2),
-                "status": status,
-            })
 
-        logger.info(f"文件知识学习完成: 解析 {total_requests} 个请求，提取 {len(created_ids)} 条知识")
-
-        return {
-            "success": True,
-            "task_id": task_id,
-            "file_name": file.filename,
-            "file_size": file_size,
-            "parsed_requests": total_requests,
-            "created_count": len(created_ids),
-            "knowledge_ids": created_ids,
-            "items": items_detail,
-            "message": f"从文件中解析 {total_requests} 个请求，提取了 {len(created_ids)} 条知识"
-        }
+        logger.info(f"文件知识学习完成(task={task_id}): 解析 {total_requests} 个请求，提取 {created_count} 条知识")
 
     except Exception as e:
         task_repo.update_status(task_id, TaskStatus.FAILED, error_message=str(e))
-        logger.error(f"文件知识学习失败: {e}")
-        raise HTTPException(status_code=500, detail=f"知识学习失败: {e}")
+        logger.error(f"文件知识学习失败(task={task_id}): {e}")
 
 
 @router.post("/rebuild-index")
@@ -519,3 +543,63 @@ async def rebuild_vector_index(
         "indexed_count": count,
         "message": f"Rebuilt vector index for {count} entries"
     }
+
+
+# ============== V2: 反馈与统计 ==============
+
+class FeedbackRequest(BaseModel):
+    """知识反馈请求"""
+    knowledge_id: str = Field(..., description="知识 ID")
+    used_in: str = Field(default="", description="使用场景（如 test_generation）")
+    helpful: bool = Field(..., description="是否有帮助")
+
+
+@router.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
+    """提交知识反馈（有帮助/无帮助）"""
+    item = store.get(request.knowledge_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Knowledge not found")
+
+    usage_id = store.record_usage(
+        knowledge_id=request.knowledge_id,
+        used_in=request.used_in or "manual_feedback",
+        context=""
+    )
+    store.feedback_usage(usage_id, request.helpful)
+
+    return {
+        "usage_id": usage_id,
+        "knowledge_id": request.knowledge_id,
+        "helpful": request.helpful,
+        "message": "Feedback recorded"
+    }
+
+
+@router.get("/statistics/detailed")
+async def get_detailed_statistics(
+    store: KnowledgeStore = Depends(get_knowledge_store)
+) -> dict[str, Any]:
+    """获取详细的知识库统计信息（含类型分布、质量指标）"""
+    basic_stats = store.get_statistics()
+
+    # 按类型统计
+    type_counts: dict[str, int] = {}
+    for type_val in ['auth_config', 'error_pattern', 'performance_baseline',
+                     'business_rule', 'api_dependency', 'security_rule',
+                     'env_config', 'test_experience',
+                     'project_config', 'module_context']:
+        items = store.search(type=type_val, status="active", limit=1)
+        # 使用 search_paginated 获取准确计数
+        _, count = store.search_paginated(type=type_val, status="active", page=1, page_size=1)
+        if count > 0:
+            type_counts[type_val] = count
+
+    return {
+        **basic_stats,
+        "by_type": type_counts,
+    }
+

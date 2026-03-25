@@ -1,4 +1,3 @@
-# 该文件内容使用AI生成，注意识别准确性
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -11,12 +10,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ai_test_tool/ ai_test_tool/
 COPY server.py .
 
-# 创建挂载目录并设置权限，确保非root用户可写
-RUN mkdir -p /app/data /app/logs /app/uploads
+# 创建挂载目录，使用宽松权限以兼容 volume 挂载
+RUN mkdir -p /app/data /app/logs /app/uploads/logs \
+    && chmod -R 777 /app/data /app/logs /app/uploads
 
 # 安全：使用非 root 用户运行
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
     && chown -R appuser:appgroup /app
+
 USER appuser
 
 EXPOSE 8000

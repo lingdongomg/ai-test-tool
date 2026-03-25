@@ -133,11 +133,19 @@ class ChangeType(Enum):
 
 
 class KnowledgeType(Enum):
-    """知识类型"""
-    PROJECT_CONFIG = "project_config"
-    BUSINESS_RULE = "business_rule"
-    MODULE_CONTEXT = "module_context"
-    TEST_EXPERIENCE = "test_experience"
+    """知识类型（V2 扩展为 8 种 + 保留旧类型向后兼容）"""
+    # V2 新增类型
+    AUTH_CONFIG = "auth_config"                    # 认证配置知识
+    ERROR_PATTERN = "error_pattern"                # 错误模式知识
+    PERFORMANCE_BASELINE = "performance_baseline"  # 性能基线知识
+    API_DEPENDENCY = "api_dependency"              # API 依赖关系知识
+    SECURITY_RULE = "security_rule"                # 安全规则知识
+    ENV_CONFIG = "env_config"                      # 环境配置知识
+    BUSINESS_RULE = "business_rule"                # 业务规则知识
+    TEST_EXPERIENCE = "test_experience"            # 测试经验知识
+    # 旧类型（向后兼容，新代码不应使用）
+    PROJECT_CONFIG = "project_config"              # 已废弃 → auth_config / env_config
+    MODULE_CONTEXT = "module_context"              # 已废弃 → api_dependency
 
 
 class KnowledgeStatus(Enum):
@@ -153,6 +161,8 @@ class KnowledgeSource(Enum):
     LOG_LEARNING = "log_learning"
     TEST_LEARNING = "test_learning"
     REALTIME_LOG = "realtime_log"
+    RULE_ENGINE = "rule_engine"        # V2: 规则引擎提取
+    API_DOC_SYNC = "api_doc_sync"      # V2: API 文档同步
 
 
 # =====================================================

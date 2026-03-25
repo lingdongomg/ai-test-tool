@@ -580,21 +580,41 @@ def _endpoint_to_dict(endpoint: Any) -> dict[str, Any]:
 
 
 async def _trigger_knowledge_from_import(api_doc: dict, source_file: str):
-    """从导入的 API 文档中异步提取知识"""
+    """从导入的 API 文档中异步提取知识 + 同步到持久化知识库"""
     try:
         from ..dependencies import get_knowledge_learner
         learner = get_knowledge_learner()
+
+        # 1. 从 API 文档中提取语义知识（安全配置、通用参数等）
         suggestions = learner.extract_from_api_doc(api_doc, source_file)
-        if not suggestions:
-            return
         created_ids = []
-        for s in suggestions:
-            if s.confidence < 0.5:
-                continue
-            item = learner.store.create_from_suggestion(s, "api_doc_import")
-            created_ids.append(item.knowledge_id)
-            if s.confidence >= 0.8:
-                learner.store.approve([item.knowledge_id])
-        _logger.info(f"API文档导入知识学习完成（{source_file}），创建 {len(created_ids)} 条知识")
+        if suggestions:
+            for s in suggestions:
+                if s.confidence < 0.3:
+                    continue
+                item, is_new = learner.store.create_or_merge(s, "api_doc_import")
+                if is_new:
+                    created_ids.append(item.knowledge_id)
+                    if s.confidence >= 0.8:
+                        learner.store.approve([item.knowledge_id])
+            _logger.info(f"API文档知识学习完成（{source_file}），创建 {len(created_ids)} 条知识")
+
+        # 2. 同步 API 端点元数据到知识库
+        try:
+            from ...analyzer.api_knowledge_base import ApiKnowledgeBase
+            from ...database.repository import ApiEndpointRepository, ApiTagRepository
+            ep_repo = ApiEndpointRepository()
+            tag_repo = ApiTagRepository()
+            endpoints = ep_repo.get_all()
+            tags = tag_repo.get_all()
+            if endpoints:
+                kb = ApiKnowledgeBase()
+                kb.load_from_endpoints(endpoints, tags)
+                synced = kb.sync_to_knowledge_store(learner.store)
+                if synced:
+                    _logger.info(f"同步 {synced} 条 API 文档知识到持久化知识库")
+        except Exception as e:
+            _logger.debug(f"API文档同步到知识库跳过: {e}")
+
     except Exception as e:
         _logger.warning(f"API文档知识学习失败（不影响主流程）: {e}")

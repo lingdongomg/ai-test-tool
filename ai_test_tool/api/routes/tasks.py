@@ -620,6 +620,14 @@ def _run_analysis_sync(
         tool.export_all()
         
         repo.update_status(task_id, TaskStatus.COMPLETED)
+
+        # V2: 自动触发知识学习
+        try:
+            from ...knowledge.auto_trigger import trigger_learn_from_task
+            trigger_learn_from_task(task_id, auto_approve=True)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"自动知识学习触发失败: {e}")
     except TaskCancelledException:
         repo.update_status(task_id, TaskStatus.FAILED, "任务已被用户取消")
     except Exception as e:

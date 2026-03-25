@@ -31,10 +31,18 @@ class KnowledgeRetriever:
         
         # 知识类型权重（用于重排序）
         self.type_weights = {
-            "project_config": 1.2,    # 项目配置最重要
-            "business_rule": 1.1,     # 业务规则次之
-            "module_context": 1.0,    # 模块上下文
-            "test_experience": 0.9    # 测试经验
+            # V2 types
+            "auth_config": 1.3,            # 认证配置最重要（影响所有请求）
+            "security_rule": 1.25,         # 安全规则
+            "env_config": 1.2,             # 环境配置
+            "error_pattern": 1.15,         # 错误模式
+            "performance_baseline": 1.1,   # 性能基线
+            "business_rule": 1.1,          # 业务规则
+            "api_dependency": 1.05,        # API 依赖关系
+            "test_experience": 0.95,       # 测试经验
+            # 旧类型（向后兼容）
+            "project_config": 1.2,
+            "module_context": 1.0,
         }
     
     def retrieve(self, context: KnowledgeContext) -> list[KnowledgeSearchResult]:
@@ -239,7 +247,8 @@ class KnowledgeRetriever:
         # 检索
         context = KnowledgeContext(
             query=query,
-            types=["project_config", "business_rule", "module_context"],
+            types=["auth_config", "env_config", "business_rule", "error_pattern",
+                   "api_dependency", "project_config", "module_context"],
             tags=tags,
             scope=api_path,
             top_k=10,
@@ -272,7 +281,8 @@ class KnowledgeRetriever:
         # 检索
         context = KnowledgeContext(
             query=query,
-            types=["project_config", "business_rule", "test_experience"],
+            types=["auth_config", "env_config", "error_pattern", "business_rule",
+                   "test_experience", "project_config"],
             top_k=8,
             min_score=0.25
         )

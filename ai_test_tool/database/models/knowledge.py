@@ -17,13 +17,15 @@ class KnowledgeEntry(BaseModel):
     knowledge_id: str
     title: str
     content: str
-    type: KnowledgeType = KnowledgeType.PROJECT_CONFIG
+    type: KnowledgeType = KnowledgeType.ENV_CONFIG
     category: str = ""
+    sub_category: str = ""  # V2: 二级子分类
     scope: str = ""
     priority: int = 0
     status: KnowledgeStatus = KnowledgeStatus.ACTIVE
     source: KnowledgeSource = KnowledgeSource.MANUAL
     source_ref: str = ""
+    evidence: str = ""  # V2: 支撑证据（统计数据或 LLM 推理摘要）
     metadata: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     created_at: datetime | None = None

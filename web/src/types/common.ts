@@ -23,14 +23,19 @@ export type TestResultStatus = 'passed' | 'failed' | 'error' | 'skipped'
 // 触发类型
 export type TriggerType = 'manual' | 'scheduled' | 'pipeline' | 'api'
 
-// 知识类型
-export type KnowledgeType = 'project_config' | 'business_rule' | 'module_context' | 'test_experience'
+// 知识类型（V2 扩展）
+export type KnowledgeType =
+  | 'auth_config' | 'error_pattern' | 'performance_baseline'
+  | 'business_rule' | 'api_dependency' | 'security_rule'
+  | 'env_config' | 'test_experience'
+  // 旧类型兼容
+  | 'project_config' | 'module_context'
 
 // 知识状态
 export type KnowledgeStatus = 'active' | 'pending' | 'archived'
 
 // 知识来源
-export type KnowledgeSource = 'manual' | 'log_learning' | 'test_learning'
+export type KnowledgeSource = 'manual' | 'log_learning' | 'test_learning' | 'realtime_log' | 'rule_engine' | 'api_doc_sync'
 
 // 接口来源类型
 export type EndpointSourceType = 'swagger' | 'postman' | 'manual'

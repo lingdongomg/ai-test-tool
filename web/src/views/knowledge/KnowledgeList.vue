@@ -1,4 +1,4 @@
-<!-- 该文件内容使用AI生成，注意识别准确性 -->
+<!-- 知识库管理页面 -->
 <template>
   <div class="knowledge-list">
     <div class="page-header">
@@ -13,7 +13,7 @@
           从文本学习
         </t-button>
         <t-button @click="showLogLearnDialog = true">
-          <template #icon><add-icon /></template>
+          <template #icon><cloud-upload-icon /></template>
           从日志学习
         </t-button>
         <t-button @click="handleRebuildIndex" :loading="rebuildingIndex">
@@ -27,7 +27,7 @@
     </div>
 
     <!-- 统计信息 -->
-    <t-row :gutter="20" class="stats-row" v-loading="statsLoading">
+    <t-row :gutter="20" class="stats-row">
       <t-col :span="6">
         <t-card hover class="stat-card">
           <div class="stat-value">{{ statistics.total || 0 }}</div>
@@ -36,13 +36,13 @@
       </t-col>
       <t-col :span="6">
         <t-card hover class="stat-card">
-          <div class="stat-value">{{ statistics.by_status?.active || 0 }}</div>
+          <div class="stat-value active">{{ statistics.by_status?.active || 0 }}</div>
           <div class="stat-label">活跃知识</div>
         </t-card>
       </t-col>
       <t-col :span="6">
-        <t-card hover class="stat-card pending">
-          <div class="stat-value">{{ statistics.by_status?.pending || 0 }}</div>
+        <t-card hover class="stat-card">
+          <div class="stat-value pending">{{ statistics.by_status?.pending || 0 }}</div>
           <div class="stat-label">待审核</div>
         </t-card>
       </t-col>
@@ -56,94 +56,95 @@
 
     <!-- 筛选区域 -->
     <t-card class="filter-card">
-      <t-form :inline="true" class="filter-form">
-        <t-form-item label="知识类型">
-          <t-select v-model="filters.type" placeholder="全部" clearable style="width: 150px">
-            <t-option label="项目配置" value="project_config" />
+      <t-row :gutter="16" align="middle">
+        <t-col :flex="1">
+          <t-select v-model="filters.type" placeholder="知识类型" clearable style="width: 150px" @change="handleSearch">
+            <t-option label="认证配置" value="auth_config" />
+            <t-option label="错误模式" value="error_pattern" />
+            <t-option label="性能基线" value="performance_baseline" />
             <t-option label="业务规则" value="business_rule" />
-            <t-option label="模块知识" value="module_context" />
+            <t-option label="API依赖" value="api_dependency" />
+            <t-option label="安全规则" value="security_rule" />
+            <t-option label="环境配置" value="env_config" />
             <t-option label="测试经验" value="test_experience" />
+            <t-option label="项目配置(旧)" value="project_config" />
+            <t-option label="模块知识(旧)" value="module_context" />
           </t-select>
-        </t-form-item>
-        <t-form-item label="状态">
-          <t-select v-model="filters.status" placeholder="全部" clearable style="width: 120px">
+        </t-col>
+        <t-col :flex="1">
+          <t-select v-model="filters.status" placeholder="状态" clearable style="width: 120px" @change="handleSearch">
             <t-option label="活跃" value="active" />
             <t-option label="待审核" value="pending" />
             <t-option label="已归档" value="archived" />
           </t-select>
-        </t-form-item>
-        <t-form-item label="标签">
-          <t-input v-model="filters.tags" placeholder="多个用逗号分隔" clearable style="width: 200px" @clear="handleSearch" />
-        </t-form-item>
-        <t-form-item label="关键词">
-          <t-input v-model="filters.keyword" placeholder="搜索标题或内容" clearable style="width: 200px" @clear="handleSearch" />
-        </t-form-item>
-        <t-form-item>
-          <t-button theme="primary" @click="handleSearch">搜索</t-button>
-          <t-button @click="resetFilters">重置</t-button>
-        </t-form-item>
-      </t-form>
+        </t-col>
+        <t-col :flex="1">
+          <t-input v-model="filters.tags" placeholder="标签(逗号分隔)" clearable style="width: 180px" @enter="handleSearch" />
+        </t-col>
+        <t-col :flex="1">
+          <t-input v-model="filters.keyword" placeholder="搜索标题或内容" clearable style="width: 200px" @enter="handleSearch" />
+        </t-col>
+        <t-col>
+          <t-space>
+            <t-button theme="primary" @click="handleSearch">搜索</t-button>
+            <t-button @click="resetFilters">重置</t-button>
+          </t-space>
+        </t-col>
+      </t-row>
     </t-card>
 
     <!-- 知识列表 -->
     <t-card class="list-card">
-      <t-table :data="knowledgeList" :loading="loading" stripe>
+      <t-table
+        :data="knowledgeList"
+        :columns="columns"
+        :loading="loading"
+        :pagination="tablePagination"
+        row-key="knowledge_id"
+        hover
+        stripe
+        @page-change="handlePageChange"
+      >
         <template #empty>
           <div style="padding: 48px 0; text-align: center; color: var(--td-text-color-placeholder);">
             <p style="font-size: 14px; margin-bottom: 8px;">暂无知识条目</p>
-            <p style="font-size: 12px;">点击"添加知识"手动录入，或使用"从文本学习"自动提取知识</p>
+            <p style="font-size: 12px;">点击"添加知识"手动录入，或使用"从日志学习"自动提取知识</p>
           </div>
         </template>
-        <t-table-column prop="title" label="标题" min-width="200">
-          <template #cell="{ row }">
-            <t-link theme="primary" @click="showDetail(row)">{{ row.title }}</t-link>
-          </template>
-        </t-table-column>
-        <t-table-column prop="type" label="类型" width="120">
-          <template #cell="{ row }">
-            <t-tag :theme="getTypeTagType(row.type)" size="small">
-              {{ getTypeName(row.type) }}
-            </t-tag>
-          </template>
-        </t-table-column>
-        <t-table-column prop="scope" label="适用范围" width="150">
-          <template #cell="{ row }">
-            <code v-if="row.scope">{{ row.scope }}</code>
-            <span v-else class="text-muted">-</span>
-          </template>
-        </t-table-column>
-        <t-table-column prop="tags" label="标签" width="200">
-          <template #cell="{ row }">
-            <t-tag v-for="tag in row.tags?.slice(0, 3)" :key="tag" size="small" class="tag-item">
+        <template #title="{ row }">
+          <t-link theme="primary" @click="showDetail(row)">{{ row.title }}</t-link>
+        </template>
+        <template #type="{ row }">
+          <t-tag :theme="getTypeTagType(row.type)" variant="light" size="small">
+            {{ getTypeName(row.type) }}
+          </t-tag>
+        </template>
+        <template #scope="{ row }">
+          <code v-if="row.scope" style="font-size: 12px;">{{ row.scope }}</code>
+          <span v-else class="text-muted">-</span>
+        </template>
+        <template #tags="{ row }">
+          <t-space size="small" v-if="row.tags?.length">
+            <t-tag v-for="tag in row.tags.slice(0, 3)" :key="tag" size="small" variant="light">
               {{ tag }}
             </t-tag>
-            <span v-if="row.tags?.length > 3" class="text-muted">+{{ row.tags.length - 3 }}</span>
-          </template>
-        </t-table-column>
-        <t-table-column prop="priority" label="优先级" width="80" align="center">
-          <template #cell="{ row }">
-            <t-tag v-if="row.priority > 0" theme="warning" size="small">{{ row.priority }}</t-tag>
-            <span v-else>-</span>
-          </template>
-        </t-table-column>
-        <t-table-column label="操作" width="150" fixed="right">
-          <template #cell="{ row }">
-            <t-button variant="text" size="small" @click="editKnowledge(row)">编辑</t-button>
-            <t-button variant="text" theme="danger" size="small" @click="deleteKnowledge(row)">删除</t-button>
-          </template>
-        </t-table-column>
+            <span v-if="row.tags.length > 3" class="text-muted">+{{ row.tags.length - 3 }}</span>
+          </t-space>
+          <span v-else class="text-muted">-</span>
+        </template>
+        <template #priority="{ row }">
+          <t-tag v-if="row.priority > 0" theme="warning" size="small">{{ row.priority }}</t-tag>
+          <span v-else>-</span>
+        </template>
+        <template #op="{ row }">
+          <t-space>
+            <t-link theme="primary" @click="editKnowledge(row)">编辑</t-link>
+            <t-popconfirm content="确定删除该知识？" @confirm="deleteKnowledge(row)">
+              <t-link theme="danger">删除</t-link>
+            </t-popconfirm>
+          </t-space>
+        </template>
       </t-table>
-
-      <t-pagination
-        v-model:current="pagination.page"
-        v-model:page-size="pagination.pageSize"
-        :total="pagination.total"
-        :page-size-options="[10, 20, 50, 100]"
-        show-jumper
-        class="pagination"
-        @change="handlePageChange"
-        @page-size-change="handleSizeChange"
-      />
     </t-card>
 
     <!-- 创建/编辑对话框 -->
@@ -165,17 +166,21 @@
         </t-form-item>
         <t-form-item label="类型">
           <t-select v-model="formData.type" style="width: 200px">
-            <t-option label="项目配置" value="project_config" />
+            <t-option label="认证配置" value="auth_config" />
+            <t-option label="错误模式" value="error_pattern" />
+            <t-option label="性能基线" value="performance_baseline" />
             <t-option label="业务规则" value="business_rule" />
-            <t-option label="模块知识" value="module_context" />
+            <t-option label="API依赖" value="api_dependency" />
+            <t-option label="安全规则" value="security_rule" />
+            <t-option label="环境配置" value="env_config" />
             <t-option label="测试经验" value="test_experience" />
           </t-select>
         </t-form-item>
         <t-form-item label="子分类">
-          <t-input v-model="formData.category" placeholder="可选，如 auth, header 等" />
+          <t-input v-model="formData.category" placeholder="可选，如 bearer_token, client_error_4xx 等" />
         </t-form-item>
         <t-form-item label="适用范围">
-          <t-input v-model="formData.scope" placeholder="如 /api/live/* 或模块名" />
+          <t-input v-model="formData.scope" placeholder="如 /api/user/* 或模块名" />
         </t-form-item>
         <t-form-item label="优先级">
           <t-input-number v-model="formData.priority" :min="0" :max="10" />
@@ -206,7 +211,7 @@
         </div>
         <div class="detail-item">
           <label>类型：</label>
-          <t-tag :theme="getTypeTagType(detailKnowledge.type)" size="small">
+          <t-tag :theme="getTypeTagType(detailKnowledge.type)" variant="light" size="small">
             {{ getTypeName(detailKnowledge.type) }}
           </t-tag>
         </div>
@@ -220,9 +225,9 @@
         </div>
         <div class="detail-item" v-if="detailKnowledge.tags?.length">
           <label>标签：</label>
-          <t-tag v-for="tag in detailKnowledge.tags" :key="tag" size="small" class="tag-item">
-            {{ tag }}
-          </t-tag>
+          <t-space size="small">
+            <t-tag v-for="tag in detailKnowledge.tags" :key="tag" size="small" variant="light">{{ tag }}</t-tag>
+          </t-space>
         </div>
       </div>
     </t-dialog>
@@ -242,11 +247,11 @@
           />
         </t-form-item>
         <t-form-item label="来源说明">
-          <t-input v-model="learnForm.source_ref" placeholder="可选，如：生产日志 2024-01" />
+          <t-input v-model="learnForm.source_ref" placeholder="可选，如：生产日志 2026-03" />
         </t-form-item>
         <t-form-item label="自动审核">
           <t-switch v-model="learnForm.auto_approve" />
-          <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">高置信度知识自动通过审核</span>
+          <span style="margin-left: 8px; color: var(--td-text-color-placeholder);">高置信度知识自动通过审核</span>
         </t-form-item>
       </t-form>
       <template #footer>
@@ -280,13 +285,13 @@
                     :label="`${task.name} (${task.total_requests || 0}个请求)`"
                   />
                 </t-select>
-                <div v-if="completedTasks.length === 0 && !loadingTasks" style="margin-top: 8px; color: rgba(0,0,0,0.4); font-size: 12px;">
+                <div v-if="completedTasks.length === 0 && !loadingTasks" style="margin-top: 8px; color: var(--td-text-color-placeholder); font-size: 12px;">
                   暂无已完成的分析任务，请先到「日志洞察」页面上传日志
                 </div>
               </t-form-item>
               <t-form-item label="自动审核">
                 <t-switch v-model="logLearnForm.auto_approve" />
-                <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">高置信度知识自动通过审核</span>
+                <span style="margin-left: 8px; color: var(--td-text-color-placeholder);">高置信度知识自动通过审核</span>
               </t-form-item>
             </t-form>
           </div>
@@ -297,15 +302,30 @@
               <t-form-item label="日志文件" required>
                 <t-upload
                   v-model="logLearnFiles"
-                  :auto-upload="false"
-                  :multiple="false"
+                  theme="custom"
                   accept=".log,.txt,.json"
-                  theme="dragger"
+                  :auto-upload="false"
+                  :max="1"
+                  @change="handleFileChange"
                 >
-                  <div style="padding: 20px; text-align: center;">
-                    <div style="font-size: 14px; color: rgba(0,0,0,0.6);">点击或拖拽上传日志文件</div>
-                    <div style="font-size: 12px; color: rgba(0,0,0,0.4); margin-top: 4px;">支持 .log .txt .json 格式</div>
-                  </div>
+                  <template #default>
+                    <div class="upload-area" :class="{ 'has-file': logLearnFiles.length }">
+                      <template v-if="!logLearnFiles.length">
+                        <cloud-upload-icon style="font-size: 48px; color: var(--td-brand-color); margin-bottom: 8px;" />
+                        <div style="font-size: 14px; font-weight: 500;">点击或拖拽上传日志文件</div>
+                        <div style="font-size: 12px; color: var(--td-text-color-placeholder); margin-top: 4px;">
+                          支持 .log .txt .json 格式，最大 100MB
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                          <t-icon name="file" />
+                          <span>{{ logLearnFiles[0]?.name || '已选择文件' }}</span>
+                          <t-tag size="small" theme="success">已选择</t-tag>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
                 </t-upload>
               </t-form-item>
               <t-form-item label="来源说明">
@@ -316,7 +336,7 @@
               </t-form-item>
               <t-form-item label="自动审核">
                 <t-switch v-model="logLearnForm.auto_approve" />
-                <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">高置信度知识自动通过审核</span>
+                <span style="margin-left: 8px; color: var(--td-text-color-placeholder);">高置信度知识自动通过审核</span>
               </t-form-item>
             </t-form>
           </div>
@@ -332,28 +352,32 @@
     <t-dialog
       v-model:visible="showLearnResultDialog"
       header="学习结果"
-      width="650px"
+      width="700px"
     >
       <div v-if="learnResult">
-        <p style="margin-bottom: 16px;">{{ learnResult.message }}</p>
-        <t-table :data="learnResult.items" stripe v-if="learnResult.items?.length">
-          <t-table-column prop="title" label="标题" min-width="200" />
-          <t-table-column prop="type" label="类型" width="100">
-            <template #cell="{ row }">
-              <t-tag :theme="getTypeTagType(row.type)" size="small">{{ getTypeName(row.type) }}</t-tag>
-            </template>
-          </t-table-column>
-          <t-table-column prop="confidence" label="置信度" width="80" align="center">
-            <template #cell="{ row }">{{ row.confidence }}</template>
-          </t-table-column>
-          <t-table-column prop="status" label="状态" width="100">
-            <template #cell="{ row }">
-              <t-tag v-if="row.status === 'active'" theme="success" size="small">已通过</t-tag>
-              <t-tag v-else theme="warning" size="small">待审核</t-tag>
-            </template>
-          </t-table-column>
+        <t-alert theme="success" :message="learnResult.message" style="margin-bottom: 16px;" />
+        <t-table
+          :data="learnResult.items || []"
+          :columns="resultColumns"
+          row-key="knowledge_id"
+          stripe
+          hover
+          v-if="learnResult.items?.length"
+        >
+          <template #type="{ row }">
+            <t-tag :theme="getTypeTagType(row.type)" variant="light" size="small">{{ getTypeName(row.type) }}</t-tag>
+          </template>
+          <template #confidence="{ row }">
+            <t-tag :theme="row.confidence >= 0.8 ? 'success' : row.confidence >= 0.5 ? 'warning' : 'default'" size="small">
+              {{ (row.confidence * 100).toFixed(0) }}%
+            </t-tag>
+          </template>
+          <template #status="{ row }">
+            <t-tag v-if="row.status === 'active'" theme="success" size="small">已通过</t-tag>
+            <t-tag v-else theme="warning" size="small">待审核</t-tag>
+          </template>
         </t-table>
-        <div v-else style="padding: 24px; text-align: center; color: rgba(0,0,0,0.4);">
+        <div v-else style="padding: 24px; text-align: center; color: var(--td-text-color-placeholder);">
           未提取到知识条目
         </div>
       </div>
@@ -365,18 +389,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
-import { AddIcon, RefreshIcon } from 'tdesign-icons-vue-next'
-import { knowledgeApi } from '../../api/v2'
-import { insightsApi } from '../../api/v2'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
+import { AddIcon, RefreshIcon, CloudUploadIcon } from 'tdesign-icons-vue-next'
+import { knowledgeApi, insightsApi } from '../../api/v2'
+import type { PrimaryTableCol } from 'tdesign-vue-next'
 
 // 状态
 const loading = ref(false)
 const saving = ref(false)
 const learning = ref(false)
 const rebuildingIndex = ref(false)
-const statsLoading = ref(false)
 const knowledgeList = ref<any[]>([])
 const statistics = ref<any>({})
 const showCreateDialog = ref(false)
@@ -422,30 +445,70 @@ const pagination = reactive({
 const formData = reactive({
   title: '',
   content: '',
-  type: 'project_config',
+  type: 'business_rule',
   category: '',
   scope: '',
   priority: 0,
   tags: [] as string[]
 })
 
-// 类型映射
+// 类型映射（V2 扩展 8 种 + 旧类型兼容）
 const typeNames: Record<string, string> = {
-  project_config: '项目配置',
+  auth_config: '认证配置',
+  error_pattern: '错误模式',
+  performance_baseline: '性能基线',
   business_rule: '业务规则',
+  api_dependency: 'API依赖',
+  security_rule: '安全规则',
+  env_config: '环境配置',
+  test_experience: '测试经验',
+  // 旧类型兼容
+  project_config: '项目配置',
   module_context: '模块知识',
-  test_experience: '测试经验'
 }
 
 const typeTagTypes: Record<string, string> = {
-  project_config: 'primary',
+  auth_config: 'primary',
+  error_pattern: 'danger',
+  performance_baseline: 'warning',
   business_rule: 'success',
-  module_context: 'warning',
-  test_experience: 'info'
+  api_dependency: 'primary',
+  security_rule: 'danger',
+  env_config: 'default',
+  test_experience: 'warning',
+  project_config: 'primary',
+  module_context: 'default',
 }
 
 const getTypeName = (type: string) => typeNames[type] || type
-const getTypeTagType = (type: string) => typeTagTypes[type] || ''
+const getTypeTagType = (type: string) => (typeTagTypes[type] || 'default') as any
+
+// TDesign 表格列定义
+const columns: PrimaryTableCol[] = [
+  { colKey: 'title', title: '标题', ellipsis: true, minWidth: 200 },
+  { colKey: 'type', title: '类型', width: 120 },
+  { colKey: 'scope', title: '适用范围', width: 180, ellipsis: true },
+  { colKey: 'tags', title: '标签', width: 200 },
+  { colKey: 'priority', title: '优先级', width: 80, align: 'center' },
+  { colKey: 'op', title: '操作', width: 130, fixed: 'right' },
+]
+
+// 学习结果列定义
+const resultColumns: PrimaryTableCol[] = [
+  { colKey: 'title', title: '标题', ellipsis: true },
+  { colKey: 'type', title: '类型', width: 100 },
+  { colKey: 'confidence', title: '置信度', width: 80, align: 'center' },
+  { colKey: 'status', title: '状态', width: 80 },
+]
+
+// TDesign 分页配置
+const tablePagination = computed(() => ({
+  current: pagination.page,
+  pageSize: pagination.pageSize,
+  total: pagination.total,
+  pageSizeOptions: [10, 20, 50, 100],
+  showJumper: true,
+}))
 
 // 加载列表
 const loadList = async () => {
@@ -461,12 +524,10 @@ const loadList = async () => {
     if (filters.keyword) params.keyword = filters.keyword
 
     const data: any = await knowledgeApi.list(params)
-
     knowledgeList.value = data.items || []
     pagination.total = data.total || 0
   } catch (error) {
     console.error('加载知识列表失败:', error)
-    MessagePlugin.error('加载知识列表失败')
   } finally {
     loading.value = false
   }
@@ -474,14 +535,10 @@ const loadList = async () => {
 
 // 加载统计
 const loadStatistics = async () => {
-  statsLoading.value = true
   try {
     statistics.value = await knowledgeApi.getStatistics()
   } catch (error) {
     console.error('Failed to load statistics', error)
-    MessagePlugin.error('加载统计数据失败')
-  } finally {
-    statsLoading.value = false
   }
 }
 
@@ -506,13 +563,10 @@ const refreshList = () => {
   loadStatistics()
 }
 
-// 分页
-const handleSizeChange = () => {
-  pagination.page = 1
-  loadList()
-}
-
-const handlePageChange = () => {
+// 分页变化
+const handlePageChange = (pageInfo: any) => {
+  pagination.page = pageInfo.current
+  pagination.pageSize = pageInfo.pageSize
   loadList()
 }
 
@@ -554,9 +608,8 @@ const saveKnowledge = async () => {
     showCreateDialog.value = false
     resetForm()
     refreshList()
-    } catch (error) {
+  } catch (error) {
     console.error('保存知识失败:', error)
-    MessagePlugin.error('保存知识失败')
   } finally {
     saving.value = false
   }
@@ -564,23 +617,13 @@ const saveKnowledge = async () => {
 
 // 删除
 const deleteKnowledge = async (row: any) => {
-  const confirmDialog = DialogPlugin.confirm({
-    header: '确认删除',
-    body: '确定要删除这条知识吗？',
-    onConfirm: async () => {
-      try {
-        await knowledgeApi.delete(row.knowledge_id)
-        MessagePlugin.success('删除成功')
-        refreshList()
-      } catch (error) {
-        console.error('删除知识失败:', error)
-        MessagePlugin.error('删除知识失败')
-      }
-    },
-    onClose: () => {
-      confirmDialog.destroy()
-    }
-  })
+  try {
+    await knowledgeApi.delete(row.knowledge_id)
+    MessagePlugin.success('删除成功')
+    refreshList()
+  } catch (error) {
+    console.error('删除知识失败:', error)
+  }
 }
 
 // 重置表单
@@ -588,7 +631,7 @@ const resetForm = () => {
   editingKnowledge.value = null
   formData.title = ''
   formData.content = ''
-  formData.type = 'project_config'
+  formData.type = 'business_rule'
   formData.category = ''
   formData.scope = ''
   formData.priority = 0
@@ -614,18 +657,19 @@ const handleLearn = async () => {
   }
   learning.value = true
   try {
-    await knowledgeApi.learn({
+    const result: any = await knowledgeApi.learn({
       content: learnForm.content,
       source_ref: learnForm.source_ref || undefined,
       auto_approve: learnForm.auto_approve
     })
-    MessagePlugin.success('知识学习完成')
     showLearnDialog.value = false
+    learnResult.value = result
+    showLearnResultDialog.value = true
     learnForm.content = ''
     learnForm.source_ref = ''
     refreshList()
   } catch (error) {
-    MessagePlugin.error('知识学习失败')
+    // error handled by interceptor
   } finally {
     learning.value = false
   }
@@ -638,7 +682,7 @@ const handleRebuildIndex = async () => {
     const res: any = await knowledgeApi.rebuildIndex()
     MessagePlugin.success(res.message || '索引重建完成')
   } catch (error) {
-    MessagePlugin.error('索引重建失败')
+    // error handled by interceptor
   } finally {
     rebuildingIndex.value = false
   }
@@ -658,6 +702,11 @@ const loadCompletedTasks = async () => {
   }
 }
 
+// 文件选择回调
+const handleFileChange = (value: any) => {
+  logLearnFiles.value = value || []
+}
+
 // 从日志学习
 const handleLogLearn = async () => {
   logLearning.value = true
@@ -665,7 +714,6 @@ const handleLogLearn = async () => {
     let result: any
 
     if (logLearnTab.value === 'task') {
-      // 从分析任务学习
       if (!logLearnForm.task_id) {
         MessagePlugin.warning('请选择分析任务')
         logLearning.value = false
@@ -675,25 +723,43 @@ const handleLogLearn = async () => {
         task_id: logLearnForm.task_id,
         auto_approve: logLearnForm.auto_approve,
       })
+      // 从任务学习是同步的，显示结果
+      showLogLearnDialog.value = false
+      learnResult.value = result
+      showLearnResultDialog.value = true
+      MessagePlugin.success(result.message || '知识学习完成')
     } else {
-      // 从文件学习
+      // 从文件学习 — 异步模式
       if (!logLearnFiles.value.length) {
         MessagePlugin.warning('请选择日志文件')
         logLearning.value = false
         return
       }
-      const file = logLearnFiles.value[0].raw || logLearnFiles.value[0]
+      const fileObj = logLearnFiles.value[0]
+      const file = fileObj?.raw || fileObj
+      if (!file) {
+        MessagePlugin.warning('文件读取失败，请重新选择')
+        logLearning.value = false
+        return
+      }
       result = await knowledgeApi.learnFromFile(file, {
         auto_approve: logLearnForm.auto_approve,
         source_ref: logLearnForm.source_ref || undefined,
         max_lines: logLearnForm.max_lines || undefined,
       })
+      // 文件学习是异步的，立即关闭弹窗
+      showLogLearnDialog.value = false
+      const taskId = result.task_id || ''
+      MessagePlugin.success({
+        content: `文件已上传，正在后台学习知识${taskId ? `（任务 ${taskId}）` : ''}，完成后可在列表中查看`,
+        duration: 5000,
+      })
+      // 重置表单
+      logLearnForm.task_id = ''
+      logLearnForm.source_ref = ''
+      logLearnForm.max_lines = null
+      logLearnFiles.value = []
     }
-
-    showLogLearnDialog.value = false
-    learnResult.value = result
-    showLearnResultDialog.value = true
-    MessagePlugin.success(result.message || '知识学习完成')
   } catch (error: any) {
     const msg = error?.response?.data?.detail || '知识学习失败'
     MessagePlugin.error(msg)
@@ -706,7 +772,6 @@ const handleLogLearn = async () => {
 const closeLearnResult = () => {
   showLearnResultDialog.value = false
   learnResult.value = null
-  // 重置表单
   logLearnForm.task_id = ''
   logLearnForm.source_ref = ''
   logLearnForm.max_lines = null
@@ -744,6 +809,11 @@ watch(showLogLearnDialog, (visible) => {
   margin: 0;
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .stats-row {
   margin-bottom: 20px;
 }
@@ -755,16 +825,20 @@ watch(showLogLearnDialog, (visible) => {
 .stat-value {
   font-size: 32px;
   font-weight: bold;
-  color: #409eff;
+  color: var(--td-brand-color, #0052d9);
+}
+
+.stat-value.active {
+  color: var(--td-success-color, #2ba471);
+}
+
+.stat-value.pending {
+  color: var(--td-warning-color, #e37318);
 }
 
 .stat-label {
-  color: #909399;
+  color: var(--td-text-color-secondary);
   margin-top: 8px;
-}
-
-.stat-card.pending .stat-value {
-  color: #e6a23c;
 }
 
 .filter-card {
@@ -775,17 +849,8 @@ watch(showLogLearnDialog, (visible) => {
   margin-bottom: 20px;
 }
 
-.pagination {
-  margin-top: 20px;
-  justify-content: flex-end;
-}
-
-.tag-item {
-  margin-right: 4px;
-}
-
 .text-muted {
-  color: #909399;
+  color: var(--td-text-color-placeholder);
 }
 
 .knowledge-detail .detail-item {
@@ -795,13 +860,37 @@ watch(showLogLearnDialog, (visible) => {
 .knowledge-detail .detail-item label {
   font-weight: bold;
   margin-right: 8px;
+  display: inline-block;
+  min-width: 80px;
 }
 
 .content-box {
-  background: #f5f7fa;
+  background: var(--td-bg-color-secondarycontainer);
   padding: 12px;
   border-radius: 4px;
   white-space: pre-wrap;
   margin-top: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.upload-area {
+  padding: 32px 20px;
+  text-align: center;
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  width: 100%;
+}
+
+.upload-area:hover {
+  border-color: var(--td-brand-color);
+}
+
+.upload-area.has-file {
+  border-style: solid;
+  border-color: var(--td-success-color);
+  background: var(--td-success-color-1);
 }
 </style>

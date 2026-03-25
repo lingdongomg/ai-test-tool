@@ -27,6 +27,7 @@ from ..database.models import (
 )
 from .models import KnowledgeItem, KnowledgeSuggestion
 from .embeddings import EmbeddingProvider, get_embedding_provider
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +449,24 @@ class KnowledgeStore:
         created_by: str = ""
     ) -> KnowledgeItem:
         """从知识建议创建条目"""
+        # 确定来源
+        source_ref_lower = suggestion.source_ref.lower()
+        if "rule_engine" in source_ref_lower:
+            source = "rule_engine"
+        elif "log" in source_ref_lower:
+            source = "log_learning"
+        elif "test" in source_ref_lower:
+            source = "test_learning"
+        elif "api_doc" in source_ref_lower:
+            source = "api_doc_sync"
+        else:
+            source = "log_learning"
+
+        # 将 evidence 和 related_urls 存入 metadata
+        metadata: dict[str, Any] = {}
+        if hasattr(suggestion, 'related_urls') and suggestion.related_urls:
+            metadata['related_urls'] = suggestion.related_urls
+
         return self.create(
             title=suggestion.title,
             content=suggestion.content,
@@ -455,8 +474,9 @@ class KnowledgeStore:
             category=suggestion.category,
             scope=suggestion.scope,
             tags=suggestion.tags,
-            source="log_learning" if "log" in suggestion.source_ref.lower() else "test_learning",
+            source=source,
             source_ref=suggestion.source_ref,
+            metadata=metadata,
             status="pending",  # 建议的知识需要审核
             created_by=created_by
         )
@@ -542,6 +562,89 @@ class KnowledgeStore:
             logger.error(f"Vector search failed: {e}")
             return []
     
+    def find_similar(
+        self,
+        title: str,
+        content: str,
+        scope: str = "",
+        type: str = "",
+        threshold: float = 0.85
+    ) -> KnowledgeItem | None:
+        """
+        查找与给定标题/内容语义相似的已有知识
+
+        两阶段去重策略:
+        1. 精确匹配: 相同 scope + type → 直接返回
+        2. 语义匹配: 向量相似度 > threshold → 返回最相似的
+
+        Args:
+            title: 新知识标题
+            content: 新知识内容
+            scope: 适用范围
+            type: 知识类型
+            threshold: 语义相似度阈值
+
+        Returns:
+            找到的相似知识条目，未找到返回 None
+        """
+        # 1. 精确去重：同 scope + type 下搜索关键词匹配
+        if scope and type:
+            existing = self.search(
+                type=type, scope=scope, status="active", limit=10
+            )
+            for item in existing:
+                # 标题高度相似（包含关系）
+                if (title.lower() in item.title.lower() or
+                    item.title.lower() in title.lower()):
+                    return item
+
+        # 2. 语义去重：向量相似度
+        if self.use_vector_store:
+            query_text = f"{title}\n{content}"
+            results = self.vector_search(query=query_text, top_k=3)
+            for kid, score in results:
+                if score >= threshold:
+                    item = self.get(kid)
+                    if item and (not type or item.type == type):
+                        return item
+
+        return None
+
+    def create_or_merge(
+        self,
+        suggestion: KnowledgeSuggestion,
+        created_by: str = ""
+    ) -> tuple[KnowledgeItem, bool]:
+        """
+        创建知识或与已有知识合并（去重）
+
+        Returns:
+            (item, is_new): 知识条目 + 是否新建
+        """
+        existing = self.find_similar(
+            title=suggestion.title,
+            content=suggestion.content,
+            scope=suggestion.scope,
+            type=suggestion.type,
+            threshold=0.85
+        )
+
+        if existing:
+            # 合并：如果新内容更详细，更新 content
+            new_content = suggestion.content
+            if len(new_content) > len(existing.content):
+                self.update(
+                    knowledge_id=existing.knowledge_id,
+                    content=new_content,
+                    updated_by=created_by
+                )
+            logger.info(f"知识去重合并: {existing.knowledge_id} ← '{suggestion.title[:30]}'")
+            return existing, False
+
+        # 新建
+        item = self.create_from_suggestion(suggestion, created_by)
+        return item, True
+
     def rebuild_vector_index(self) -> int:
         """重建向量索引"""
         if not self.use_vector_store:
@@ -591,8 +694,10 @@ class KnowledgeStore:
             content=entry.content,
             type=entry.type.value if isinstance(entry.type, KnowledgeType) else entry.type,
             category=entry.category,
+            sub_category=getattr(entry, 'sub_category', ''),
             scope=entry.scope,
             priority=entry.priority,
             tags=entry.tags,
-            metadata=entry.metadata
+            metadata=entry.metadata,
+            evidence=getattr(entry, 'evidence', ''),
         )
