@@ -189,3 +189,33 @@ async def websocket_log_endpoint(
         logger.error(f"WebSocket 错误 (source_id={source_id}): {e}")
     finally:
         service.unregister_connection(source_id)
+
+
+# ==================== 告警 API ====================
+
+@router.get("/alerts")
+async def list_alerts(
+    source_id: str | None = None,
+    hours: int = 24,
+    limit: int = 50,
+):
+    """获取最近告警列表"""
+    from ...services.alert_manager import AlertManager
+    manager = AlertManager()
+    alerts = manager.get_recent_alerts(
+        source_id=source_id or "",
+        hours=hours,
+        limit=limit,
+    )
+    return {"success": True, "total": len(alerts), "alerts": alerts}
+
+
+@router.post("/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str):
+    """确认告警"""
+    from ...services.alert_manager import AlertManager
+    manager = AlertManager()
+    success = manager.acknowledge_alert(alert_id)
+    if success:
+        return {"success": True, "message": "告警已确认"}
+    return {"success": False, "message": "确认失败"}

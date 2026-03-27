@@ -133,6 +133,15 @@
           <t-input-number v-model="formData.auto_approve_threshold" :min="0" :max="1" :step="0.1" :decimal-places="1" style="width: 200px" />
           <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">置信度达到此值自动通过</span>
         </t-form-item>
+        <t-divider>告警配置</t-divider>
+        <t-form-item label="实时告警">
+          <t-switch v-model="formData.alert_enabled" />
+          <span style="margin-left: 8px; color: rgba(0,0,0,0.4);">ERROR/CRITICAL 日志立即告警</span>
+        </t-form-item>
+        <t-form-item label="Webhook URL">
+          <t-input v-model="formData.webhook_url" placeholder="告警通知地址（如企微机器人 Webhook）" />
+          <div style="margin-top: 4px; font-size: 12px; color: rgba(0,0,0,0.4);">留空则不发送外部通知，告警仍会记录在系统中</div>
+        </t-form-item>
         <div v-if="editingSource" style="margin-top: 16px; padding: 12px; background: #f5f7fa; border-radius: 4px;">
           <div style="font-size: 12px; color: rgba(0,0,0,0.4);">WebSocket 连接地址</div>
           <code style="font-size: 13px;">ws://{{ window.location.host }}/ws/logs?source_id={{ editingSource.source_id }}</code>
@@ -166,6 +175,8 @@ const formData = reactive({
   buffer_timeout_sec: 30,
   auto_learn: true,
   auto_approve_threshold: 0.8,
+  alert_enabled: true,
+  webhook_url: '',
 })
 
 // 统计
@@ -197,6 +208,8 @@ const editSource = (row: any) => {
   formData.buffer_timeout_sec = row.buffer_timeout_sec || 30
   formData.auto_learn = row.auto_learn !== false
   formData.auto_approve_threshold = row.auto_approve_threshold || 0.8
+  formData.alert_enabled = row.alert_enabled !== false
+  formData.webhook_url = row.webhook_url || ''
   showCreateDialog.value = true
 }
 

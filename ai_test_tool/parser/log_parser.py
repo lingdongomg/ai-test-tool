@@ -89,7 +89,7 @@ class LogParser:
         self,
         file_path: str,
         chunk_size: int = 1000,
-        max_lines: int | None = None,
+        max_lines: int | None = 10000,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> Generator[list[ParsedRequest], None, None]:
         """
@@ -205,6 +205,17 @@ class LogParser:
 
             requests: list[ParsedRequest] = []
             for req_data in result.get("requests", []):
+                # 该文件内容使用AI生成，注意识别准确性
+                # 从 LLM 输出中读取 query_params（修复遗漏BUG）
+                query_params = req_data.get("query_params", {})
+                if not isinstance(query_params, dict):
+                    query_params = {}
+
+                # 从 LLM 输出中读取 response_body
+                response_body = req_data.get("response_body")
+                if response_body and len(str(response_body)) > 500:
+                    response_body = str(response_body)[:500]
+
                 req = ParsedRequest(
                     request_id=req_data.get("request_id", str(uuid.uuid4())),
                     timestamp=str(req_data.get("timestamp", "")),
@@ -212,8 +223,10 @@ class LogParser:
                     url=req_data.get("url", ""),
                     headers=req_data.get("headers", {}),
                     body=req_data.get("body"),
+                    query_params=query_params,
                     http_status=req_data.get("http_status", 0),
                     response_time_ms=req_data.get("response_time_ms", 0),
+                    response_body=response_body,
                     has_error=req_data.get("has_error", False),
                     error_message=req_data.get("error_message", ""),
                     has_warning=req_data.get("has_warning", False),
@@ -284,6 +297,7 @@ class LogParser:
     ) -> ParsedRequest | None:
         """从内容中提取请求信息"""
         import re
+        from urllib.parse import urlparse, parse_qs
 
         # 通用HTTP方法匹配
         http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -300,6 +314,13 @@ class LogParser:
                 match = re.search(pattern, content, re.IGNORECASE)
                 if match:
                     url = match.group(1)
+
+                    # 从 URL 中提取 query_params
+                    query_params: dict[str, str] = {}
+                    if '?' in url:
+                        parsed = urlparse(url)
+                        qs = parse_qs(parsed.query, keep_blank_values=True)
+                        query_params = {k: v[0] if len(v) == 1 else ','.join(v) for k, v in qs.items()}
 
                     # 提取状态码
                     status_match = re.search(r"\|\s*(\d{3})\s*\|", content)
@@ -329,6 +350,7 @@ class LogParser:
                         timestamp=str(timestamp),
                         method=method.upper(),
                         url=url,
+                        query_params=query_params,
                         http_status=http_status,
                         response_time_ms=response_time,
                         body=body,

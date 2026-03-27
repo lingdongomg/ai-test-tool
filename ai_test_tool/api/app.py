@@ -28,7 +28,7 @@ from ..exceptions import (
     ExternalServiceError,
     get_http_status
 )
-from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge, analysis, log_stream
+from .routes import dashboard, development, monitoring, insights, ai_assistant, imports, tasks, knowledge, log_stream
 
 
 class JSONLogFormatter(logging.Formatter):
@@ -236,8 +236,6 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router, prefix="/api/v2/tasks", tags=["分析任务"])
     # 知识库管理
     app.include_router(knowledge.router, prefix="/api/v2/knowledge", tags=["知识库"])
-    # 场景四：智能分析（路由分发）
-    app.include_router(analysis.router, prefix="/api/v2/analysis", tags=["智能分析"])
     # 实时日志流
     app.include_router(log_stream.router, prefix="/api/v2/log-stream", tags=["实时日志"])
 

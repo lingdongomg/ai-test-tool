@@ -189,17 +189,60 @@ class LogAnalysisChain(BaseChain):
     def categorize_requests(
         self, requests: list[dict[str, Any]], api_doc_context: str = ""
     ) -> dict[str, Any]:
-        """对请求进行智能分类"""
-        requests_json = json.dumps(requests[:50], ensure_ascii=False, indent=2)
+        """对请求进行智能分类（规则优先 + LLM 回退）"""
+        # 第一步：用规则引擎分类（零 LLM 成本）
+        from ..skills.data_skills import classify_request
+        categorized = []
+        uncategorized = []
+        category_summary: dict[str, int] = {}
 
-        if api_doc_context:
-            prompt = LOG_CATEGORIZATION_WITH_RAG_PROMPT.format(
-                api_doc_context=api_doc_context, requests_json=requests_json
-            )
-        else:
-            prompt = LOG_CATEGORIZATION_PROMPT.format(requests_json=requests_json)
+        for req in requests[:50]:
+            url = req.get("url", "")
+            result = classify_request(url)
+            cat = result.get("category", "其他")
+            confidence = result.get("confidence", 0)
 
-        return self._parse_json_response(self._call_llm(prompt, "请求分类"))
+            if confidence >= 0.7:
+                categorized.append({"url": url, "category": cat, "source": "rule"})
+                category_summary[cat] = category_summary.get(cat, 0) + 1
+            else:
+                uncategorized.append(req)
+
+        # 第二步：只对未分类的请求调用 LLM
+        if uncategorized and len(uncategorized) <= len(requests) * 0.5:
+            # 未分类数量较少时才调 LLM，节省 token
+            try:
+                requests_json = json.dumps(uncategorized, ensure_ascii=False, indent=2)
+                if api_doc_context:
+                    prompt = LOG_CATEGORIZATION_WITH_RAG_PROMPT.format(
+                        api_doc_context=api_doc_context, requests_json=requests_json
+                    )
+                else:
+                    prompt = LOG_CATEGORIZATION_PROMPT.format(requests_json=requests_json)
+
+                llm_result = self._parse_json_response(self._call_llm(prompt, "请求分类"))
+                for item in llm_result.get("categorized_requests", []):
+                    item["source"] = "llm"
+                    categorized.append(item)
+                    cat = item.get("category", "其他")
+                    category_summary[cat] = category_summary.get(cat, 0) + 1
+            except Exception as e:
+                logger.warning(f"LLM 分类回退失败: {e}")
+                for req in uncategorized:
+                    categorized.append({"url": req.get("url", ""), "category": "其他", "source": "fallback"})
+                    category_summary["其他"] = category_summary.get("其他", 0) + 1
+        elif uncategorized:
+            # 全量调 LLM
+            requests_json = json.dumps(requests[:50], ensure_ascii=False, indent=2)
+            if api_doc_context:
+                prompt = LOG_CATEGORIZATION_WITH_RAG_PROMPT.format(
+                    api_doc_context=api_doc_context, requests_json=requests_json
+                )
+            else:
+                prompt = LOG_CATEGORIZATION_PROMPT.format(requests_json=requests_json)
+            return self._parse_json_response(self._call_llm(prompt, "请求分类"))
+
+        return {"categorized_requests": categorized, "category_summary": category_summary}
 
     def compare_with_api_doc(
         self, api_doc_summary: str, coverage_data: dict[str, Any]
@@ -214,10 +257,21 @@ class LogAnalysisChain(BaseChain):
     def diagnose_errors(
         self, error_logs: str, context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """诊断错误日志"""
-        prompt = LOG_DIAGNOSIS_PROMPT.format(
-            error_logs=error_logs, context=json.dumps(context or {}, ensure_ascii=False)
-        )
+        """诊断错误日志（支持知识上下文增强）"""
+        ctx = context or {}
+        knowledge_context = ctx.pop("knowledge_context", "")
+
+        if knowledge_context:
+            from .prompts import LOG_DIAGNOSIS_WITH_RAG_PROMPT
+            prompt = LOG_DIAGNOSIS_WITH_RAG_PROMPT.format(
+                knowledge_context=knowledge_context,
+                error_logs=error_logs,
+                context=json.dumps(ctx, ensure_ascii=False),
+            )
+        else:
+            prompt = LOG_DIAGNOSIS_PROMPT.format(
+                error_logs=error_logs, context=json.dumps(ctx, ensure_ascii=False)
+            )
         return self._parse_json_response(self._call_llm(prompt, "错误诊断"))
 
 
@@ -230,8 +284,42 @@ class ReportGeneratorChain(BaseChain):
         error_logs: list[dict[str, Any]],
         warning_logs: list[dict[str, Any]],
         performance_data: dict[str, Any],
+        use_template: bool = True,
     ) -> str:
-        """生成分析报告"""
+        """生成分析报告（模板优先 + LLM 回退）"""
+        # 模板优先：简单场景直接用 Markdown 模板
+        if use_template and len(error_logs) + len(warning_logs) <= 30:
+            try:
+                from ..skills.analysis_skills import generate_report_from_template
+                anomalies = []
+                for e in error_logs:
+                    anomalies.append({
+                        "type": e.get("type", "error"),
+                        "severity": "error",
+                        "title": e.get("message", e.get("title", "错误")),
+                        "description": str(e.get("message", ""))[:200],
+                    })
+                for w in warning_logs:
+                    anomalies.append({
+                        "type": w.get("type", "warning"),
+                        "severity": "warning",
+                        "title": w.get("message", w.get("title", "警告")),
+                        "description": str(w.get("message", ""))[:200],
+                    })
+
+                result = generate_report_from_template(
+                    title="日志分析报告",
+                    anomalies=anomalies,
+                    stats=summary_data,
+                )
+                content = result.get("content", "")
+                if content:
+                    logger.info("使用模板生成报告（跳过 LLM）")
+                    return content
+            except Exception as e:
+                logger.debug(f"模板报告生成失败，回退到 LLM: {e}")
+
+        # LLM 回退
         prompt = ANALYSIS_REPORT_PROMPT.format(
             summary_data=json.dumps(summary_data, ensure_ascii=False, indent=2),
             error_logs=json.dumps(error_logs[:20], ensure_ascii=False, indent=2),

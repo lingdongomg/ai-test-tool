@@ -14,7 +14,23 @@ from langchain_core.language_models import BaseLLM
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
 
 from ..config import LLMConfig, get_config
-from ..context.token_counter import TokenCounter
+
+import re as _re
+
+class TokenCounter:
+    """简化版 Token 计数器（内联，原 context/token_counter.py）"""
+    _CHINESE_RATIO = 1.5
+    _ASCII_RATIO = 0.25
+
+    def __init__(self, model: str = ""):
+        self.model = model
+
+    def count(self, text: str) -> int:
+        if not text:
+            return 0
+        chinese = len(_re.findall(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]', text))
+        ascii_c = len(text) - chinese
+        return int(chinese * self._CHINESE_RATIO + ascii_c * self._ASCII_RATIO)
 
 logger = logging.getLogger(__name__)
 

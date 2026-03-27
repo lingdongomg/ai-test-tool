@@ -181,7 +181,6 @@ from . import ai_assistant
 from . import imports
 from . import tasks
 from . import knowledge
-from . import analysis
 from . import log_stream
 
 # 任务取消检查函数
@@ -196,7 +195,6 @@ __all__ = [
     "imports",
     "tasks",
     "knowledge",
-    "analysis",
     "log_stream",
     "is_task_cancelled",
     # 工具函数

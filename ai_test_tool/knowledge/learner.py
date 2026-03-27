@@ -42,12 +42,28 @@ KNOWLEDGE_EXTRACTION_PROMPT_V2 = """你是一个API测试知识提取专家。�
 - env_config: 环境配置（如基础 URL、通用 Header、CORS 配置）
 - test_experience: 测试经验（如边界情况、回归测试点、不稳定测试）
 
+## 重点分析维度（请特别关注）
+1. **请求参数分析**: 从查询参数(query_params)和请求体(body)中提取：
+   - 常用查询条件组合（如分页参数 page+size、过滤条件 status+type）
+   - 必传参数识别（高频出现的参数可能是必填的）
+   - 参数值域分析（枚举值、数值范围、格式约束如日期/邮箱）
+   - 参数间的组合约束（如二选一、同时必填）
+2. **响应数据分析**: 从响应体(response_body)中提取：
+   - 统一响应封装格式（如 code/msg/data 标准格式）
+   - 业务错误码含义映射
+   - 列表接口的分页响应结构
+   - 可用于生成测试断言的字段路径
+3. **参数-响应关联**: 分析参数与响应结果的关系：
+   - 缺少某参数导致特定错误码
+   - 不同参数值对应不同响应结构
+   - 错误触发条件模式
+
 ## 输出要求
 请以 JSON 数组格式输出，每条知识包含：
-- title: 知识标题（具体、可操作，如"用户接口需要 Bearer Token 认证"）
-- content: 知识内容（详细描述，包含具体的配置值、参数名、规则）
+- title: 知识标题（具体、可操作，如"用户列表接口支持 status/type 组合过滤"）
+- content: 知识内容（详细描述，包含具体的参数名、值域、规则）
 - type: 知识类型（从上述 8 种中选择，优先使用最精确的类型）
-- sub_category: 子分类（可选，如 bearer_token / client_error_4xx 等）
+- sub_category: 子分类（可选，如 param_constraint / data_format / error_code_mapping）
 - scope: 适用范围（如 /api/user/* 或具体路径）
 - tags: 标签数组
 - confidence: 置信度（0-1）
@@ -59,6 +75,7 @@ KNOWLEDGE_EXTRACTION_PROMPT_V2 = """你是一个API测试知识提取专家。�
 3. 如果没有发现有价值的知识，返回空数组 []
 4. 避免提取"该接口使用 POST 方法"这种显而易见的知识
 5. 每条知识应该能直接指导一个或多个测试用例的编写
+6. 对请求参数和响应体中的具体字段名要如实记录
 
 请输出 JSON 数组："""
 
@@ -147,6 +164,176 @@ class KnowledgeLearner:
 
         # V1 旧逻辑
         return self._extract_from_log_analysis_v1(parsed_requests, task_id)
+
+    def extract_from_anomaly_report(
+        self,
+        anomalies: list[dict[str, Any]],
+        ai_analysis: str | None = None,
+        task_id: str = ""
+    ) -> list[KnowledgeSuggestion]:
+        """
+        从异常检测报告中提取知识（专用管线，不依赖 HTTP 请求字段）
+
+        Args:
+            anomalies: 异常列表，每个元素含 type/severity/title/description
+            ai_analysis: AI 分析结论文本（可选）
+            task_id: 关联任务 ID
+
+        Returns:
+            知识建议列表
+        """
+        if not anomalies:
+            return []
+
+        suggestions: list[KnowledgeSuggestion] = []
+
+        # 1. 异常聚类（按 type+severity 分组）
+        from collections import Counter, defaultdict
+        type_severity_groups: dict[str, list[dict]] = defaultdict(list)
+        type_counter: Counter = Counter()
+        severity_counter: Counter = Counter()
+
+        for a in anomalies:
+            a_type = a.get('type', 'unknown')
+            a_severity = a.get('severity', 'unknown')
+            key = f"{a_type}|{a_severity}"
+            type_severity_groups[key].append(a)
+            type_counter[a_type] += 1
+            severity_counter[a_severity] += 1
+
+        # 2. 规则提取：从聚类中提取知识
+        total = len(anomalies)
+
+        # 2a. 高频异常类型
+        for a_type, count in type_counter.most_common(5):
+            if count < 2:
+                continue
+            ratio = count / total
+            # 收集该类型下的代表性描述
+            sample_titles = list(set(
+                a.get('title', '') for a in anomalies if a.get('type') == a_type
+            ))[:5]
+
+            suggestions.append(KnowledgeSuggestion(
+                title=f"高频异常类型: {a_type} ({count} 次, {ratio*100:.0f}%)",
+                content=(
+                    f"在 {total} 个异常中，类型 `{a_type}` 出现 {count} 次 ({ratio*100:.0f}%)。\n"
+                    f"代表性异常:\n"
+                    + '\n'.join(f"- {t}" for t in sample_titles if t)
+                    + "\n\n建议在测试用例中覆盖此类异常的触发场景和错误处理逻辑。"
+                ),
+                type="error_pattern",
+                sub_category=a_type,
+                scope="global",
+                confidence=min(0.85, 0.4 + ratio * 0.5),
+                tags=["异常检测", a_type],
+                source_ref=f"anomaly_detection:{task_id}",
+                reason="异常检测自动提取",
+                evidence=f"异常总数: {total}, 该类型: {count}",
+            ))
+
+        # 2b. 严重度分布
+        if len(severity_counter) >= 2:
+            dist_lines = [f"- {sev}: {cnt} 个 ({cnt/total*100:.0f}%)"
+                         for sev, cnt in severity_counter.most_common()]
+            suggestions.append(KnowledgeSuggestion(
+                title=f"日志异常严重度分布 (共 {total} 个异常)",
+                content=(
+                    f"异常严重度分布:\n"
+                    + '\n'.join(dist_lines)
+                    + "\n\n测试时应优先关注高严重度异常的触发路径。"
+                ),
+                type="test_experience",
+                sub_category="severity_distribution",
+                scope="global",
+                confidence=0.7,
+                tags=["异常检测", "严重度"],
+                source_ref=f"anomaly_detection:{task_id}",
+                reason="异常检测自动提取",
+                evidence=f"异常总数: {total}",
+            ))
+
+        # 3. LLM 深度分析（如果有 AI 分析结论或异常数量足够）
+        if self._llm_chain and (ai_analysis or total >= 5):
+            content_parts = [f"## 异常检测报告分析\n共检测到 {total} 个异常。\n"]
+
+            if ai_analysis:
+                content_parts.append(f"### AI 分析结论\n{ai_analysis[:2000]}\n")
+
+            content_parts.append("### 异常类型分布")
+            for a_type, count in type_counter.most_common(10):
+                content_parts.append(f"- {a_type}: {count} 个")
+
+            content_parts.append("\n### 代表性异常详情")
+            for a in anomalies[:15]:
+                content_parts.append(
+                    f"- [{a.get('severity', '?')}] {a.get('title', '?')}: "
+                    f"{a.get('description', '')[:200]}"
+                )
+
+            llm_content = '\n'.join(content_parts)
+            llm_suggestions = self._extract_with_llm(
+                llm_content, f"anomaly_report:{task_id}"
+            )
+            suggestions.extend(llm_suggestions)
+
+        logger.info(
+            f"异常报告知识提取完成: {total} 个异常 → {len(suggestions)} 条知识建议"
+        )
+        return suggestions
+
+    def extract_from_raw_log(
+        self,
+        file_path: str,
+        task_id: str = ""
+    ) -> list[KnowledgeSuggestion]:
+        """
+        从原始日志文件中直接提取知识（保底回退方法）
+
+        使用 SmartLogSampler 采样后直接送 LLM 分析，
+        当异常检测和请求解析都未产出知识时使用。
+
+        Args:
+            file_path: 日志文件路径
+            task_id: 关联任务 ID
+
+        Returns:
+            知识建议列表
+        """
+        if not self._llm_chain:
+            logger.warning("LLM chain 未配置，无法执行原始日志知识提取")
+            return []
+
+        try:
+            from .sampler import SmartLogSampler
+            sampler = SmartLogSampler()
+            sampled_lines = sampler.sample_file(file_path)
+
+            if not sampled_lines:
+                logger.info(f"原始日志采样结果为空: {file_path}")
+                return []
+
+            # 构建 LLM 分析内容
+            content = (
+                f"## 原始日志采样分析\n"
+                f"从日志文件中采样了 {len(sampled_lines)} 行进行分析。\n\n"
+                f"### 日志内容\n```\n"
+                + '\n'.join(sampled_lines[:500])  # 最多 500 行给 LLM
+                + "\n```\n\n"
+                f"请从这些日志中提取对 API 测试有帮助的知识，"
+                f"如错误模式、性能问题、接口行为规律、参数约束等。"
+            )
+
+            suggestions = self._extract_with_llm(content, f"raw_log:{task_id}")
+            logger.info(
+                f"原始日志知识提取完成: {len(sampled_lines)} 行 → "
+                f"{len(suggestions)} 条知识建议"
+            )
+            return suggestions
+
+        except Exception as e:
+            logger.error(f"原始日志知识提取失败: {e}")
+            return []
 
     def _extract_from_log_analysis_v1(
         self,

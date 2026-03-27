@@ -121,8 +121,8 @@ async def upload_log_file(
     safe_filename = os.path.basename(file.filename or "upload.log").replace("..", "")
     file_path = os.path.join(upload_dir, f"{task_id}_{safe_filename}")
 
-    # C2: 文件大小限制 (100MB)
-    max_upload_size = 100 * 1024 * 1024
+    # C2: 文件大小限制 (500MB)
+    max_upload_size = 500 * 1024 * 1024
 
     try:
         # 流式写入文件，避免大文件一次性占满内存
@@ -397,7 +397,7 @@ def _trigger_knowledge_learning_from_requests(task_id: str, task_logger=None):
 
         # 查询该任务解析出的所有请求
         rows = request_repo.db.fetch_all(
-            "SELECT * FROM parsed_requests WHERE task_id = %s",
+            "SELECT * FROM parsed_requests WHERE task_id = ?",
             (task_id,)
         )
         if not rows:
@@ -409,19 +409,31 @@ def _trigger_knowledge_learning_from_requests(task_id: str, task_logger=None):
 
         # 使用 extract_from_log_analysis 提取知识建议
         suggestions = learner.extract_from_log_analysis(parsed_requests, task_id)
+
+        # 保底回退：如果请求管线零产出，尝试原始日志直接提取
         if not suggestions:
-            _logger.info(f"任务 {task_id} 未提取到知识建议")
+            _logger.info(f"任务 {task_id} 请求管线未提取到知识，尝试原始日志回退")
+            try:
+                task_repo = TaskRepository()
+                task = task_repo.get_by_id(task_id)
+                if task and task.log_file_path:
+                    suggestions = learner.extract_from_raw_log(task.log_file_path, task_id)
+            except Exception:
+                pass
+
+        if not suggestions:
+            _logger.info(f"任务 {task_id} 最终未提取到知识建议")
             return
 
-        # 保存知识条目
+        # 保存知识条目（置信度阈值降至 0.3）
         created_ids = []
         for suggestion in suggestions:
-            if suggestion.confidence < 0.5:
+            if suggestion.confidence < 0.3:
                 continue
             item = learner.store.create_from_suggestion(suggestion, "auto_learning")
             created_ids.append(item.knowledge_id)
-            # 高置信度自动通过审核
-            if suggestion.confidence >= 0.8:
+            # 高置信度自动通过审核（阈值降至 0.7）
+            if suggestion.confidence >= 0.7:
                 learner.store.approve([item.knowledge_id])
 
         _logger.info(f"任务 {task_id} 自动学习完成，创建 {len(created_ids)} 条知识")
@@ -431,14 +443,14 @@ def _trigger_knowledge_learning_from_requests(task_id: str, task_logger=None):
 
 
 def _trigger_knowledge_from_anomaly(report, task_id: str):
-    """从异常检测报告中提取知识"""
+    """从异常检测报告中提取知识（使用专用异常管线）"""
     try:
         from ..dependencies import get_knowledge_learner
         learner = get_knowledge_learner()
 
-        # 构造分析内容：从异常中提取可学习的模式
+        # 构造异常数据（不再截断为 20 条，传入全部异常）
         anomaly_data = []
-        for a in getattr(report, 'anomalies', [])[:20]:
+        for a in getattr(report, 'anomalies', []):
             anomaly_data.append({
                 "type": a.anomaly_type.value if hasattr(a.anomaly_type, 'value') else str(a.anomaly_type),
                 "severity": a.severity.value if hasattr(a.severity, 'value') else str(a.severity),
@@ -448,18 +460,40 @@ def _trigger_knowledge_from_anomaly(report, task_id: str):
         if not anomaly_data:
             return
 
-        # 用日志分析提取方式处理
-        suggestions = learner.extract_from_log_analysis(anomaly_data, task_id)
+        # 获取 AI 分析结论
+        ai_analysis = getattr(report, 'ai_analysis', None)
+
+        # 使用异常专用提取方法
+        suggestions = learner.extract_from_anomaly_report(
+            anomaly_data, ai_analysis, task_id
+        )
+
+        # 保底回退：如果专用管线零产出，尝试从原始日志直接提取
         if not suggestions:
+            logger.info(f"异常专用管线零产出，尝试原始日志回退 [{task_id}]")
+            file_path = None
+            try:
+                task_repo = TaskRepository()
+                task = task_repo.get_by_id(task_id)
+                if task and task.log_file_path:
+                    file_path = task.log_file_path
+            except Exception:
+                pass
+            if file_path:
+                suggestions = learner.extract_from_raw_log(file_path, task_id)
+
+        if not suggestions:
+            logger.info(f"任务 {task_id} 最终未提取到知识")
             return
 
+        # 保存知识（置信度阈值统一降至 0.3）
         created_ids = []
         for s in suggestions:
-            if s.confidence < 0.5:
+            if s.confidence < 0.3:
                 continue
             item = learner.store.create_from_suggestion(s, "anomaly_detection")
             created_ids.append(item.knowledge_id)
-            if s.confidence >= 0.8:
+            if s.confidence >= 0.7:
                 learner.store.approve([item.knowledge_id])
         logger.info(f"异常检测任务 {task_id} 知识学习完成，创建 {len(created_ids)} 条知识")
     except Exception as e:

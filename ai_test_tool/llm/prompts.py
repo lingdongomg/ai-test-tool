@@ -36,7 +36,8 @@ LOG_ANALYSIS_PROMPT = """你是一位资深的后端开发工程师和日志分�
       "has_error": true/false,
       "error_message": "错误信息或空字符串",
       "has_warning": true/false,
-      "warning_message": "警告信息或空字符串"
+      "warning_message": "警告信息或空字符串",
+      "response_body": "响应体内容（仅提取前500字符的关键结构，如JSON对象的顶层字段，无法获取则为null）"
     }}
   ],
   "errors": [
@@ -762,3 +763,51 @@ TEST_CASE_GENERATION_WITH_KNOWLEDGE_PROMPT = """你是一位资深的测试工�
 ```
 
 请直接输出JSON："""
+
+
+# 该文件内容使用AI生成，注意识别准确性
+# 带知识库上下文的日志诊断 Prompt
+LOG_DIAGNOSIS_WITH_RAG_PROMPT = """你是一位系统诊断专家，请结合已知知识库和异常日志进行诊断。
+
+{knowledge_context}
+
+## 异常日志
+```
+{error_logs}
+```
+
+## 上下文信息
+```json
+{context}
+```
+
+## 诊断要求
+1. **优先参考知识库中的已知模式和解决方案**
+2. 识别问题根因
+3. 评估影响范围
+4. 提供解决方案（结合知识库中的建议）
+5. 给出预防措施
+
+## 输出格式
+```json
+{{
+  "diagnosis": {{
+    "root_cause": "根本原因",
+    "impact": "影响范围",
+    "severity": "high/medium/low",
+    "affected_services": ["受影响的服务"]
+  }},
+  "solutions": [
+    {{
+      "description": "解决方案描述",
+      "steps": ["步骤1", "步骤2"],
+      "priority": "immediate/short-term/long-term",
+      "from_knowledge": true
+    }}
+  ],
+  "prevention": ["预防措施"],
+  "knowledge_applied": ["引用的知识库条目标题"]
+}}
+```
+
+请开始诊断："""

@@ -23,9 +23,6 @@ from .test import TestFolder, TestCaseRecord, TestCaseHistory, TestExecution, Te
 # API 相关模型
 from .api import ApiTag, ApiEndpoint
 
-# 场景相关模型
-from .scenario import TestScenario, ScenarioStep, ScenarioExecution, StepResult
-
 # 知识库相关模型
 from .knowledge import KnowledgeEntry, KnowledgeHistory, KnowledgeUsage
 
@@ -74,7 +71,6 @@ __all__ = [
     'AnalysisTask', 'ParsedRequestRecord', 'AnalysisReport',
     'TestFolder', 'TestCaseRecord', 'TestCaseHistory', 'TestExecution', 'TestResultRecord',
     'ApiTag', 'ApiEndpoint',
-    'TestScenario', 'ScenarioStep', 'ScenarioExecution', 'StepResult',
     'KnowledgeEntry', 'KnowledgeHistory', 'KnowledgeUsage',
     # 监控相关
     'AIInsight', 'InsightSeverity',

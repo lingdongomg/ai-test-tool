@@ -412,6 +412,14 @@ export const logStreamApi = {
 
   getSourceStats: (sourceId: string): Promise<any> =>
     api.get(`/log-stream/sources/${sourceId}/stats`),
+
+  // 告警 API
+  listAlerts: (params?: {
+    source_id?: string; hours?: number; limit?: number
+  }): Promise<any> => api.get('/log-stream/alerts', { params }),
+
+  acknowledgeAlert: (alertId: string): Promise<any> =>
+    api.post(`/log-stream/alerts/${alertId}/acknowledge`),
 }
 
 export default api

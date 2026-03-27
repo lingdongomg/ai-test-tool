@@ -214,6 +214,26 @@ class TestCaseGenerator:
         for r in requests:
             sample_headers.update(r.headers)
         
+        # 收集 query_params 样本
+        sample_query_params: list[dict[str, str]] = []
+        for r in requests:
+            qp = r.query_params
+            if isinstance(qp, str):
+                try:
+                    qp = json.loads(qp)
+                except (json.JSONDecodeError, ValueError):
+                    qp = {}
+            if qp and isinstance(qp, dict):
+                sample_query_params.append(qp)
+        sample_query_params = sample_query_params[:5]
+
+        # 收集 response_body 样本
+        sample_response_bodies: list[str] = []
+        for r in requests:
+            if r.response_body:
+                sample_response_bodies.append(str(r.response_body)[:500])
+        sample_response_bodies = sample_response_bodies[:3]
+        
         # 收集响应状态
         status_codes = list(set(r.http_status for r in requests if r.http_status > 0))
         
@@ -241,7 +261,8 @@ class TestCaseGenerator:
         # 4. 使用LLM增强测试用例
         if self.llm_chain and sample_bodies:
             llm_cases = self._generate_llm_cases(
-                method, url, sample_headers, sample_bodies, test_strategy
+                method, url, sample_headers, sample_bodies, test_strategy,
+                sample_query_params, sample_response_bodies
             )
             test_cases.extend(llm_cases)
         
@@ -463,19 +484,23 @@ class TestCaseGenerator:
         url: str,
         headers: dict[str, str],
         sample_bodies: list[dict[str, Any]],
-        test_strategy: str
+        test_strategy: str,
+        sample_query_params: list[dict] | None = None,
+        sample_response_bodies: list[str] | None = None,
     ) -> list[TestCase]:
         """使用LLM生成测试用例（带知识库增强）"""
         try:
             # 尝试使用知识增强的LLM生成
             if self._knowledge_enabled and self._knowledge_chain and self._rag_builder:
                 return self._generate_knowledge_enhanced_cases(
-                    method, url, headers, sample_bodies, test_strategy
+                    method, url, headers, sample_bodies, test_strategy,
+                    sample_query_params, sample_response_bodies
                 )
             
             # 降级到普通LLM生成
             return self._generate_basic_llm_cases(
-                method, url, headers, sample_bodies, test_strategy
+                method, url, headers, sample_bodies, test_strategy,
+                sample_query_params, sample_response_bodies
             )
             
         except Exception as e:
@@ -488,7 +513,9 @@ class TestCaseGenerator:
         url: str,
         headers: dict[str, str],
         sample_bodies: list[dict[str, Any]],
-        test_strategy: str
+        test_strategy: str,
+        sample_query_params: list[dict] | None = None,
+        sample_response_bodies: list[str] | None = None,
     ) -> list[TestCase]:
         """使用知识库增强的LLM生成测试用例"""
         self.logger.ai_start("知识增强测试用例生成", f"{method} {url}")
@@ -498,7 +525,9 @@ class TestCaseGenerator:
             "method": method,
             "url": url,
             "headers": headers,
-            "sample_bodies": sample_bodies
+            "sample_bodies": sample_bodies,
+            "sample_query_params": sample_query_params or [],
+            "sample_response_bodies": sample_response_bodies or [],
         }
         
         sample_requests = [
@@ -540,7 +569,9 @@ class TestCaseGenerator:
         url: str,
         headers: dict[str, str],
         sample_bodies: list[dict[str, Any]],
-        test_strategy: str
+        test_strategy: str,
+        sample_query_params: list[dict] | None = None,
+        sample_response_bodies: list[str] | None = None,
     ) -> list[TestCase]:
         """使用基础LLM生成测试用例"""
         self.logger.ai_start("LLM测试用例生成", f"{method} {url}")
@@ -549,7 +580,9 @@ class TestCaseGenerator:
             "method": method,
             "url": url,
             "headers": headers,
-            "sample_bodies": sample_bodies
+            "sample_bodies": sample_bodies,
+            "sample_query_params": sample_query_params or [],
+            "sample_response_bodies": sample_response_bodies or [],
         }
         
         sample_requests = [

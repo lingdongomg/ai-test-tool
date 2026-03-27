@@ -1,3 +1,4 @@
+# 该文件内容使用AI生成，注意识别准确性
 """
 数据仓库层 - 兼容层
 
@@ -19,10 +20,6 @@ from .repositories import (  # noqa: F401
     ExecutionCaseRepository,
     ApiTagRepository,
     ApiEndpointRepository,
-    TestScenarioRepository,
-    ScenarioStepRepository,
-    ScenarioExecutionRepository,
-    StepResultRepository,
     KnowledgeRepository,
     KnowledgeHistoryRepository,
     KnowledgeUsageRepository,

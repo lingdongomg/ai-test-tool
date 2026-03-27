@@ -26,13 +26,6 @@ from .api import (
     ApiEndpointRepository,
 )
 
-from .scenario import (
-    TestScenarioRepository,
-    ScenarioStepRepository,
-    ScenarioExecutionRepository,
-    StepResultRepository,
-)
-
 from .knowledge import (
     KnowledgeRepository,
     KnowledgeHistoryRepository,
@@ -64,9 +57,6 @@ __all__ = [
     'TestResultRepository', 'TestExecutionRepository', 'ExecutionCaseRepository',
     # API
     'ApiTagRepository', 'ApiEndpointRepository',
-    # Scenario
-    'TestScenarioRepository', 'ScenarioStepRepository',
-    'ScenarioExecutionRepository', 'StepResultRepository',
     # Knowledge
     'KnowledgeRepository', 'KnowledgeHistoryRepository', 'KnowledgeUsageRepository',
     # Monitoring

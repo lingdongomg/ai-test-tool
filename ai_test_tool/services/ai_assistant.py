@@ -770,7 +770,7 @@ class AIAssistantService:
         context: dict[str, Any] | None = None
     ) -> str:
         """
-        智能问答
+        智能问答（带知识库 RAG 增强）
         
         Args:
             question: 问题
@@ -789,6 +789,20 @@ class AIAssistantService:
         # 获取一些统计数据作为背景
         stats = self._get_system_stats()
         
+        # 检索知识库相关知识
+        knowledge_str = ""
+        try:
+            from ..api.dependencies import get_knowledge_retriever, get_rag_builder
+            retriever = get_knowledge_retriever()
+            rag_builder = get_rag_builder()
+            entries = retriever.retrieve(query=question, limit=5)
+            if entries:
+                knowledge_str = rag_builder.build_context(query=question, entries=entries)
+                if knowledge_str:
+                    knowledge_str = f"\n\n{knowledge_str}"
+        except Exception as e:
+            self.logger.debug(f"知识库检索失败（不影响问答）: {e}")
+        
         prompt = f"""你是一个 API 测试工具的智能助手。请根据以下信息回答用户的问题。
 
 系统统计：
@@ -796,11 +810,11 @@ class AIAssistantService:
 - 测试用例数: {stats.get('test_case_count', 0)}
 - 最近执行数: {stats.get('recent_executions', 0)}
 - 平均成功率: {stats.get('avg_success_rate', 0):.1%}
-{context_str}
+{knowledge_str}{context_str}
 
 用户问题：{question}
 
-请提供清晰、准确、有帮助的回答。如果问题涉及具体数据，请基于上述统计信息回答。"""
+请提供清晰、准确、有帮助的回答。如果知识库中有相关信息，请优先参考。如果问题涉及具体数据，请基于上述统计信息回答。"""
         
         answer = self.provider.generate(prompt)
         

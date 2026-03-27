@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from ..database.repositories.log_source import LogSourceRepository
 from ..knowledge.learner import KnowledgeLearner
 from ..parser.log_parser import LogParser
+from .rule_detector import RuleDetector, DetectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,8 @@ class LogStreamService:
         self._buffers: dict[str, LogBuffer] = {}
         self._active_connections: dict[str, Any] = {}  # source_id -> websocket
         self._processing_lock = asyncio.Lock()
+        self._rule_detector = RuleDetector()
+        self._alert_manager = None  # 延迟初始化
 
     @property
     def active_connection_count(self) -> int:
@@ -128,18 +131,49 @@ class LogStreamService:
         return None
 
     async def _add_lines(self, source_id: str, lines: list[str]) -> dict | None:
-        """添加日志行到缓冲区，必要时触发分析"""
+        """添加日志行到缓冲区，先执行规则检测再入缓冲区"""
         buffer = self._buffers.get(source_id)
         if not buffer:
             return {"type": "error", "message": "缓冲区不存在"}
 
+        # 逐行规则检测（微秒级，不阻塞）
+        alert_events = []
+        for line in lines:
+            result = self._rule_detector.check(line)
+            if result and self._rule_detector.is_error_or_critical(result):
+                alert_events.append(result)
+            # WARN 暂只记日志，Phase 7 会接入 daily_stats
+            elif result and self._rule_detector.is_warning(result):
+                logger.debug(f"WARN 检测: [{source_id}] {result.pattern_name}: {line[:100]}")
+
+        # 触发告警（如果有 AlertManager）
+        if alert_events:
+            try:
+                if self._alert_manager is None:
+                    from .alert_manager import AlertManager
+                    self._alert_manager = AlertManager()
+                for event in alert_events:
+                    self._alert_manager.on_error_detected(source_id, event)
+            except Exception as e:
+                logger.warning(f"告警处理失败: {e}")
+
+        # 日志行照常入缓冲区
         buffer.add_lines(lines)
         self._source_repo.update_stats(source_id, lines_added=len(lines))
 
+        response = None
         if buffer.should_flush:
-            return await self._flush_and_analyze(source_id, buffer)
+            response = await self._flush_and_analyze(source_id, buffer)
 
-        return None
+        # 如果有告警，附加告警信息到响应
+        if alert_events and not response:
+            response = {
+                "type": "alerts_detected",
+                "count": len(alert_events),
+                "severities": [e.severity for e in alert_events],
+            }
+
+        return response
 
     async def _flush_and_analyze(self, source_id: str, buffer: LogBuffer) -> dict | None:
         """刷新缓冲区并在后台触发分析"""

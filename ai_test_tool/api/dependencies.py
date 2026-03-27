@@ -24,10 +24,6 @@ from ..database.repository import (
     ReportRepository,
     ApiTagRepository,
     ApiEndpointRepository,
-    TestScenarioRepository,
-    ScenarioStepRepository,
-    ScenarioExecutionRepository,
-    StepResultRepository,
     KnowledgeRepository,
     KnowledgeHistoryRepository,
     KnowledgeUsageRepository,
@@ -126,30 +122,6 @@ def get_api_endpoint_repository() -> ApiEndpointRepository:
 
 
 @lru_cache()
-def get_test_scenario_repository() -> TestScenarioRepository:
-    """获取测试场景仓库（单例）"""
-    return TestScenarioRepository()
-
-
-@lru_cache()
-def get_scenario_step_repository() -> ScenarioStepRepository:
-    """获取场景步骤仓库（单例）"""
-    return ScenarioStepRepository()
-
-
-@lru_cache()
-def get_scenario_execution_repository() -> ScenarioExecutionRepository:
-    """获取场景执行仓库（单例）"""
-    return ScenarioExecutionRepository()
-
-
-@lru_cache()
-def get_step_result_repository() -> StepResultRepository:
-    """获取步骤结果仓库（单例）"""
-    return StepResultRepository()
-
-
-@lru_cache()
 def get_knowledge_repository() -> KnowledgeRepository:
     """获取知识库仓库（单例）"""
     return KnowledgeRepository()
@@ -235,13 +207,6 @@ def get_production_monitor_service():
 
 
 @lru_cache()
-def get_intelligent_analysis_service():
-    """获取智能分析服务（单例）"""
-    from ..services.intelligent_analysis import IntelligentAnalysisService
-    return IntelligentAnalysisService()
-
-
-@lru_cache()
 def get_endpoint_test_generator():
     """获取接口测试生成器（单例）"""
     from ..services.endpoint_test_generator import EndpointTestGenerator
@@ -292,13 +257,6 @@ def get_log_anomaly_detector_service():
     """获取日志异常检测服务（单例）"""
     from ..services.log_anomaly_detector import LogAnomalyDetectorService
     return LogAnomalyDetectorService(verbose=True)
-
-
-@lru_cache()
-def get_insights_service():
-    """获取日志洞察服务（单例）"""
-    from ..services.insights import InsightsService
-    return InsightsService()
 
 
 @lru_cache()

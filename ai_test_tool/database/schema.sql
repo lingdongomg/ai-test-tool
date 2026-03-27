@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS analysis_tasks (
     total_requests INTEGER DEFAULT 0,
     total_test_cases INTEGER DEFAULT 0,
     error_message TEXT,
+    knowledge_stats TEXT,
     metadata TEXT,
     started_at TEXT,
     completed_at TEXT,
@@ -627,3 +628,38 @@ CREATE TABLE IF NOT EXISTS log_sources (
 );
 CREATE INDEX IF NOT EXISTS idx_log_sources_source_id ON log_sources(source_id);
 CREATE INDEX IF NOT EXISTS idx_log_sources_is_enabled ON log_sources(is_enabled);
+
+-- 实时告警表
+CREATE TABLE IF NOT EXISTS log_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id TEXT NOT NULL UNIQUE,
+    source_id TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'error' CHECK(severity IN ('critical', 'error', 'warning', 'security')),
+    pattern_name TEXT NOT NULL,
+    log_line TEXT,
+    diagnosis TEXT,
+    report_id TEXT,
+    hit_count INTEGER DEFAULT 1,
+    is_acknowledged INTEGER DEFAULT 0,
+    acknowledged_at TEXT,
+    metadata TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_log_alerts_source_id ON log_alerts(source_id);
+CREATE INDEX IF NOT EXISTS idx_log_alerts_severity ON log_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_log_alerts_created_at ON log_alerts(created_at);
+
+-- 每日统计表（WARN 摘要用）
+CREATE TABLE IF NOT EXISTS log_daily_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    error_count INTEGER DEFAULT 0,
+    warn_count INTEGER DEFAULT 0,
+    critical_count INTEGER DEFAULT 0,
+    security_count INTEGER DEFAULT 0,
+    top_patterns TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_log_daily_stats_date ON log_daily_stats(date);

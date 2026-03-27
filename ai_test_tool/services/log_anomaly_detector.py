@@ -309,16 +309,55 @@ class LogAnomalyDetectorService:
         """
         self.logger.start_step(f"从文件检测异常: {file_path}")
         
-        # 读取文件内容
+        # 流式逐行读取，避免大文件一次性加载到内存
+        anomalies: list[LogAnomaly] = []
+        line_count = 0
+        max_anomalies = 5000  # 防止异常列表过大
+        
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                log_content = f.read()
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    line_count += 1
+                    
+                    if len(anomalies) >= max_anomalies:
+                        self.logger.info(f"异常数量达到上限 {max_anomalies}，停止检测")
+                        break
+                    
+                    # 检测错误
+                    for pattern, severity in self.ERROR_PATTERNS:
+                        if re.search(pattern, line):
+                            anomaly = self._create_anomaly_from_line(
+                                line, line_count, AnomalyType.ERROR_LOG, severity
+                            )
+                            anomalies.append(anomaly)
+                            break
+                    
+                    # 检测警告
+                    for pattern, severity in self.WARNING_PATTERNS:
+                        if re.search(pattern, line):
+                            anomaly = self._create_anomaly_from_line(
+                                line, line_count, AnomalyType.WARNING_LOG, severity
+                            )
+                            anomalies.append(anomaly)
+                            break
+                    
+                    # 检测安全问题
+                    for pattern, severity in self.SECURITY_PATTERNS:
+                        if re.search(pattern, line):
+                            anomaly = self._create_anomaly_from_line(
+                                line, line_count, AnomalyType.SECURITY_ALERT, severity
+                            )
+                            anomalies.append(anomaly)
+                            break
+            
+            self.logger.info(f"流式读取 {line_count} 行，检测到 {len(anomalies)} 个原始异常")
+            anomalies = self._aggregate_anomalies(anomalies)
         except Exception as e:
             self.logger.error(f"读取文件失败: {e}")
             raise
-        
-        # 检测异常
-        anomalies = self.detect_anomalies_from_log_content(log_content, file_path)
         
         # 按类型过滤
         if detect_types:
@@ -680,12 +719,44 @@ class LogAnomalyDetectorService:
         return aggregated
     
     def _ai_analyze_anomalies(self, anomalies: list[LogAnomaly]) -> dict[str, Any]:
-        """使用 AI 分析异常"""
+        """使用 AI 分析异常（知识库优先 + LLM 回退）"""
         self.logger.ai_start("AI异常分析", f"{len(anomalies)} 个异常")
         
-        # 准备异常摘要
+        # 收集错误信息和端点
+        error_messages = [a.description[:200] for a in anomalies[:20]]
+        urls = []
+        for a in anomalies[:20]:
+            urls.extend(a.affected_endpoints[:3])
+        urls = list(set(urls))[:10]
+        
+        # 第一步：通过 Skill 尝试知识库 + 模板诊断
+        try:
+            from ..skills.analysis_skills import diagnose_with_knowledge
+            skill_result = diagnose_with_knowledge(
+                error_messages=error_messages,
+                urls=urls,
+                use_llm_fallback=False,  # 先不回退 LLM
+            )
+            
+            if skill_result.get("source") in ("knowledge", "template"):
+                self.logger.info(f"知识库/模板直接诊断成功 (来源: {skill_result['source']})")
+                self.logger.ai_end("知识库诊断完成（未调用 LLM）")
+                return {
+                    "analysis": (
+                        f"## 诊断结果（来源: {skill_result['source']}）\n\n"
+                        f"**根因**: {skill_result.get('root_cause', '未知')}\n\n"
+                        f"**影响**: {skill_result.get('impact', '待评估')}\n\n"
+                        f"**建议**: {skill_result.get('suggestion', '无')}"
+                    ),
+                    "recommendations": [skill_result.get("suggestion", "")] if skill_result.get("suggestion") else [],
+                    "source": skill_result["source"],
+                }
+        except Exception as e:
+            self.logger.debug(f"Skill 诊断失败，回退到 LLM: {e}")
+        
+        # 第二步：LLM 分析（带知识上下文）
         anomaly_summary = []
-        for a in anomalies[:20]:  # 限制数量
+        for a in anomalies[:20]:
             anomaly_summary.append({
                 "type": a.anomaly_type.value,
                 "severity": a.severity.value,
@@ -695,17 +766,36 @@ class LogAnomalyDetectorService:
                 "affected_endpoints": a.affected_endpoints[:5]
             })
         
-        # 调用 AI 诊断
+        # 获取知识上下文
+        knowledge_context = ""
+        try:
+            from ..api.dependencies import get_knowledge_retriever, get_rag_builder
+            retriever = get_knowledge_retriever()
+            rag_builder = get_rag_builder()
+            entries = retriever.retrieve_for_log_analysis(urls=urls, error_messages=error_messages)
+            if entries:
+                knowledge_context = rag_builder.build_context(
+                    query=" ".join(error_messages[:3]),
+                    entries=entries,
+                )
+                self.logger.info(f"注入 {len(entries)} 条知识到诊断上下文")
+        except Exception as e:
+            self.logger.debug(f"知识上下文构建失败（不影响分析）: {e}")
+        
+        context = {
+            "total_anomalies": len(anomalies),
+            "critical_count": sum(1 for a in anomalies if a.severity == AnomalySeverity.CRITICAL),
+            "error_count": sum(1 for a in anomalies if a.severity == AnomalySeverity.ERROR),
+        }
+        if knowledge_context:
+            context["knowledge_context"] = knowledge_context
+        
         result = self.analysis_chain.diagnose_errors(
             error_logs=json.dumps(anomaly_summary, ensure_ascii=False, indent=2),
-            context={
-                "total_anomalies": len(anomalies),
-                "critical_count": sum(1 for a in anomalies if a.severity == AnomalySeverity.CRITICAL),
-                "error_count": sum(1 for a in anomalies if a.severity == AnomalySeverity.ERROR)
-            }
+            context=context
         )
         
-        self.logger.ai_end("分析完成")
+        self.logger.ai_end("LLM 分析完成")
         
         return result
     

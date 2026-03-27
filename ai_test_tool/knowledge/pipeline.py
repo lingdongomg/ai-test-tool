@@ -423,10 +423,179 @@ class DependencyExtractor(PatternExtractor):
 # =====================================================
 
 class LLMAnalysisStage(PipelineStage):
-    """仅对规则引擎低置信度结果、以及复杂业务模式调用 LLM"""
 
-    def __init__(self, llm_chain: Any = None):
-        self._llm_chain = llm_chain
+    def extract(self, ctx: PipelineContext) -> list[KnowledgeSuggestion]:
+        suggestions: list[KnowledgeSuggestion] = []
+
+        for cluster in ctx.url_clusters:
+            if cluster.total_count < 3:
+                continue
+
+            # 收集该聚类下所有请求的参数
+            all_params: dict[str, list[str]] = defaultdict(list)
+            body_fields: dict[str, list] = defaultdict(list)
+            body_count = 0
+
+            for req in cluster.requests:
+                # query_params
+                qp = req.get('query_params', {})
+                if isinstance(qp, str):
+                    try:
+                        qp = json.loads(qp)
+                    except (json.JSONDecodeError, ValueError):
+                        qp = {}
+                if isinstance(qp, dict):
+                    for k, v in qp.items():
+                        all_params[k].append(str(v))
+
+                # body 字段分析
+                body = req.get('body')
+                if body:
+                    body_dict = self._parse_body(body)
+                    if body_dict:
+                        body_count += 1
+                        for k, v in body_dict.items():
+                            body_fields[k].append(v)
+
+            # 分析 query 参数模式
+            if all_params:
+                self._extract_param_knowledge(
+                    all_params, cluster, ctx.task_id, suggestions
+                )
+
+            # 分析 body 字段 schema
+            if body_count >= 3 and body_fields:
+                self._extract_body_schema(
+                    body_fields, body_count, cluster, ctx.task_id, suggestions
+                )
+
+        return suggestions
+
+    def _extract_param_knowledge(
+        self, all_params: dict[str, list[str]],
+        cluster, task_id: str,
+        suggestions: list[KnowledgeSuggestion]
+    ) -> None:
+        total = cluster.total_count
+        param_info_parts: list[str] = []
+        required_params: list[str] = []
+        pagination_found: list[str] = []
+        filter_found: list[str] = []
+        sort_found: list[str] = []
+        enum_params: dict[str, list[str]] = {}
+
+        for param_name, values in all_params.items():
+            ratio = len(values) / total
+            lower_name = param_name.lower()
+
+            # 必传参数识别
+            if ratio >= 0.9:
+                required_params.append(param_name)
+
+            # 分页/过滤/排序模式
+            if lower_name in self._PAGINATION_PARAMS:
+                pagination_found.append(param_name)
+            elif lower_name in self._FILTER_PARAMS:
+                filter_found.append(param_name)
+            elif lower_name in self._SORT_PARAMS:
+                sort_found.append(param_name)
+
+            # 枚举值检测
+            unique_vals = list(set(values))
+            if 2 <= len(unique_vals) <= 10 and len(values) >= 3:
+                enum_params[param_name] = unique_vals
+
+            param_info_parts.append(
+                f"- `{param_name}`: 出现 {len(values)}/{total} 次 ({ratio*100:.0f}%)"
+                f", 不同值 {len(set(values))} 个"
+            )
+
+        if not param_info_parts:
+            return
+
+        # 汇总知识
+        content_parts = [f"接口 `{cluster.pattern}` 的查询参数分析（{total} 个请求样本）:\n"]
+        content_parts.extend(param_info_parts)
+
+        if required_params:
+            content_parts.append(f"\n**疑似必传参数**: {', '.join(required_params)}")
+        if pagination_found:
+            content_parts.append(f"**分页参数**: {', '.join(pagination_found)}")
+        if filter_found:
+            content_parts.append(f"**过滤参数**: {', '.join(filter_found)}")
+        if sort_found:
+            content_parts.append(f"**排序参数**: {', '.join(sort_found)}")
+        if enum_params:
+            for p, vals in list(enum_params.items())[:5]:
+                content_parts.append(f"**`{p}` 枚举值**: {vals}")
+
+        suggestions.append(self._make_suggestion(
+            title=f"接口 {cluster.pattern} 查询参数模式",
+            content='\n'.join(content_parts),
+            type="business_rule",
+            sub_category="param_constraint",
+            scope=cluster.pattern,
+            confidence=min(0.9, 0.5 + len(all_params) * 0.05),
+            tags=["参数分析", "查询条件"],
+            evidence=f"样本数: {total}, 参数种类: {len(all_params)}",
+            related_urls=[cluster.pattern],
+            task_id=task_id,
+        ))
+
+    def _extract_body_schema(
+        self, body_fields: dict[str, list],
+        body_count: int, cluster, task_id: str,
+        suggestions: list[KnowledgeSuggestion]
+    ) -> None:
+        schema_parts: list[str] = []
+        for field_name, values in list(body_fields.items())[:20]:
+            non_none = [v for v in values if v is not None]
+            types = set(type(v).__name__ for v in non_none) if non_none else {'null'}
+            ratio = len(non_none) / body_count
+            required = "必填" if ratio >= 0.9 else "可选"
+
+            unique_vals = list(set(str(v) for v in non_none))
+            val_hint = ""
+            if 2 <= len(unique_vals) <= 8:
+                val_hint = f", 枚举值: {unique_vals[:5]}"
+            elif len(unique_vals) == 1:
+                val_hint = f", 固定值: {unique_vals[0]}"
+
+            schema_parts.append(
+                f"- `{field_name}` ({'/'.join(types)}, {required}, 出现{ratio*100:.0f}%{val_hint})"
+            )
+
+        if not schema_parts:
+            return
+
+        content = (
+            f"接口 `{cluster.pattern}` 请求体字段结构（{body_count} 个请求样本）:\n"
+            + '\n'.join(schema_parts)
+        )
+
+        suggestions.append(self._make_suggestion(
+            title=f"接口 {cluster.pattern} 请求体 Schema",
+            content=content,
+            type="business_rule",
+            sub_category="data_format",
+            scope=cluster.pattern,
+            confidence=min(0.85, 0.5 + body_count * 0.02),
+            tags=["请求体", "Schema", "字段结构"],
+            evidence=f"样本数: {body_count}, 字段数: {len(body_fields)}",
+            related_urls=[cluster.pattern],
+            task_id=task_id,
+        ))
+
+    def _parse_body(self, body) -> dict | None:
+        if isinstance(body, dict):
+            return body
+        if isinstance(body, str):
+            try:
+                parsed = json.loads(body)
+                return parsed if isinstance(parsed, dict) else None
+            except (json.JSONDecodeError, ValueError):
+                return None
+        return None
 
     def set_llm_chain(self, chain: Any) -> None:
         self._llm_chain = chain
@@ -483,7 +652,7 @@ class LLMAnalysisStage(PipelineStage):
         return samples
 
     def _build_analysis_prompt(self, cluster: RequestCluster, samples: list[dict]) -> str:
-        """为 LLM 构建分析 prompt"""
+        """为 LLM 构建分析 prompt（包含内容级字段）"""
         lines = [
             f"## 接口模式分析: {cluster.pattern}",
             f"- 总请求数: {cluster.total_count}",
@@ -509,6 +678,28 @@ class LLMAnalysisStage(PipelineStage):
                     lines.append(f"  关键 Headers: {json.dumps(filtered, ensure_ascii=False)[:200]}")
             if req.get('error_message'):
                 lines.append(f"  错误: {req['error_message'][:200]}")
+
+            # 补充查询参数
+            qp = req.get('query_params', {})
+            if isinstance(qp, str):
+                try:
+                    qp = json.loads(qp)
+                except Exception:
+                    qp = {}
+            if qp:
+                lines.append(f"  查询参数: {json.dumps(qp, ensure_ascii=False)[:300]}")
+
+            # 补充请求体（截断）
+            body = req.get('body')
+            if body:
+                body_str = json.dumps(body, ensure_ascii=False) if isinstance(body, dict) else str(body)
+                lines.append(f"  请求体: {body_str[:500]}")
+
+            # 补充响应体（截断）
+            resp = req.get('response_body')
+            if resp:
+                resp_str = json.dumps(resp, ensure_ascii=False) if isinstance(resp, dict) else str(resp)
+                lines.append(f"  响应体: {resp_str[:500]}")
 
         return "\n".join(lines)
 

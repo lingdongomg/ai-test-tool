@@ -1,6 +1,6 @@
+# 该文件内容使用AI生成，注意识别准确性
 """
 数据库模块
-该文件内容使用AI生成，注意识别准确性
 """
 
 from .connection import (
@@ -25,8 +25,6 @@ from .models import (
     ExecutionType,
     ResultType,
     EndpointSourceType,
-    ScenarioStepType,
-    ScenarioStatus,
     ChangeType,
     KnowledgeType,
     KnowledgeStatus,
@@ -41,10 +39,6 @@ from .models import (
     TestExecution,
     TestResultRecord,
     AnalysisReport,
-    TestScenario,
-    ScenarioStep,
-    ScenarioExecution,
-    StepResult,
     KnowledgeEntry,
     KnowledgeHistory,
     KnowledgeUsage,
@@ -63,10 +57,6 @@ from .repository import (
     ReportRepository,
     ApiTagRepository,
     ApiEndpointRepository,
-    TestScenarioRepository,
-    ScenarioStepRepository,
-    ScenarioExecutionRepository,
-    StepResultRepository,
     KnowledgeRepository,
     KnowledgeHistoryRepository,
     KnowledgeUsageRepository,
@@ -91,8 +81,6 @@ __all__ = [
     'ExecutionType',
     'ResultType',
     'EndpointSourceType',
-    'ScenarioStepType',
-    'ScenarioStatus',
     'ChangeType',
     'KnowledgeType',
     'KnowledgeStatus',
@@ -108,10 +96,6 @@ __all__ = [
     'TestExecution',
     'TestResultRecord',
     'AnalysisReport',
-    'TestScenario',
-    'ScenarioStep',
-    'ScenarioExecution',
-    'StepResult',
     'KnowledgeEntry',
     'KnowledgeHistory',
     'KnowledgeUsage',
@@ -126,10 +110,6 @@ __all__ = [
     'ReportRepository',
     'ApiTagRepository',
     'ApiEndpointRepository',
-    'TestScenarioRepository',
-    'ScenarioStepRepository',
-    'ScenarioExecutionRepository',
-    'StepResultRepository',
     'KnowledgeRepository',
     'KnowledgeHistoryRepository',
     'KnowledgeUsageRepository',
