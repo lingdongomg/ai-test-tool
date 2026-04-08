@@ -424,6 +424,9 @@ class DependencyExtractor(PatternExtractor):
 
 class LLMAnalysisStage(PipelineStage):
 
+    def __init__(self, llm_chain: Any = None):
+        self._llm_chain = llm_chain
+
     def extract(self, ctx: PipelineContext) -> list[KnowledgeSuggestion]:
         suggestions: list[KnowledgeSuggestion] = []
 
